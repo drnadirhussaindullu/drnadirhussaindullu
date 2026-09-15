@@ -1,0 +1,64 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    background-color: #F0F7FC;
+    color: #0F172A;
+  }
+
+  h1, h2, h3, .font-serif {
+    font-family: 'Playfair Display', Georgia, serif;
+  }
+}
+
+.font-urdu {
+  font-family: 'Noto Nastaliq Urdu', 'Playfair Display', serif;
+}
+
+@media print {
+  /* Hide non-printable UI */
+  body {
+    background: white !important;
+    color: black !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  header, nav, footer, .no-print, button, form, .fixed.inset-0:not(.print-active-modal) {
+    display: none !important;
+  }
+
+  /* Show only the active print target */
+  body * {
+    visibility: hidden;
+  }
+
+  #printable-history-card,
+  #printable-history-card *,
+  #printable-slip,
+  #printable-slip * {
+    visibility: visible;
+  }
+
+  #printable-history-card,
+  #printable-slip {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 16px !important;
+    background: white !important;
+    color: #0f172a !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+
+  @page {
+    size: A4;
+    margin: 12mm;
+  }
+}
+
+
