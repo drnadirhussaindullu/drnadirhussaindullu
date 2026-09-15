@@ -205,16 +205,22 @@ export const Hero: React.FC<HeroProps> = ({
               </div>
 
               <h1 className="text-3xl sm:text-4xl lg:text-5xl font-serif text-slate-900 font-bold leading-tight">
-                Gulzar Family Hospital
+                Gulzar Family Hospital & Children Center
                 <span className="block text-2xl sm:text-3xl lg:text-4xl text-teal-700 font-serif font-normal italic mt-1" dir="rtl">
                   {hospitalInfo.nameUr}
                 </span>
               </h1>
 
+              <h2 className="text-base sm:text-lg font-bold text-teal-800">
+                {isUr
+                  ? 'ڈاکٹر نادر حسین ڈلو — چوک اعظم، لیہ میں فیملی فزیشن'
+                  : 'Family Physician Care in Chowk Azam, Layyah — Led by Dr. Nadir Hussain Dullu'}
+              </h2>
+
               <p className="text-slate-600 text-sm sm:text-base leading-relaxed max-w-3xl">
                 {isUr
                   ? 'گلزار فیملی ہسپتال چوک اعظم میں بچوں کے سینئر سپیشلسٹ ڈاکٹر نادر حسین ڈلو، امراضِ نسواں و زچگی، چائلڈ سرجری اور ۲۴ گھنٹے ایمرجنسی او پی ڈی کی سہولیات۔ اب گھر بیٹھے فوری ٹوکن حاصل کریں — بغیر کسی پیشگی لازمی ادائیگی کے، فیس ہسپتال کاؤنٹر پر بھی ادا کی جا سکتی ہے۔'
-                  : 'Welcome to Gulzar Family Hospital & Children Center, Chowk Azam. Led by Senior Child Specialist Dr. Nadir Hussain Dullu, providing 24/7 pediatric emergency, baby nursery with incubators, maternity care, and family medicine. Book your appointment token online with zero friction — advance payment is completely optional (pay at hospital OPD counter or online via JazzCash/Easypaisa).'}
+                  : 'Welcome to Gulzar Family Hospital & Children Center, located on Fatehpur Road, in front of Zarai Taraqiati Bank (ZTBL), Chowk Azam, Layyah, Punjab. Led by Senior Family Physician Dr. Nadir Hussain Dullu, the hospital provides 24/7 pediatric emergency, baby nursery with incubators, maternity care, and family medicine. Book your appointment token online with zero friction — advance payment is completely optional (pay at hospital OPD counter or online via JazzCash/Easypaisa).'}
               </p>
             </div>
 
@@ -368,7 +374,7 @@ export const Hero: React.FC<HeroProps> = ({
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                 <div className="flex items-center gap-1.5 text-xs font-bold text-teal-800 uppercase tracking-wider">
                   <Stethoscope className="w-4 h-4 text-teal-600" />
-                  <span>Head of Pediatrics</span>
+                  <span>Family Physician</span>
                 </div>
                 <span className="text-[10px] font-bold bg-teal-50 text-teal-700 px-2.5 py-0.5 rounded-full border border-teal-200">
                   22+ Yrs Exp
@@ -386,7 +392,7 @@ export const Hero: React.FC<HeroProps> = ({
                     {isUr ? 'ڈاکٹر نادر حسین ڈلو' : 'Dr. Nadir Hussain Dullu'}
                   </h3>
                   <p className="text-xs text-teal-700 font-semibold">
-                    {isUr ? 'سینئر فیملی فزیشن و ماہر امراضِ اطفال' : 'Senior Pediatrician & Family Specialist'}
+                    {isUr ? 'سینئر فیملی فزیشن و ماہر امراضِ اطفال' : 'Senior Family Physician & Pediatrician'}
                   </p>
                   <p className="text-[11px] text-slate-500 font-mono mt-0.5">
                     MBBS, MCPS • In-Clinic OPD
