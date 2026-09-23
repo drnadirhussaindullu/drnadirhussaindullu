@@ -121,9 +121,9 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
 
           <div>
-            <h1 className="text-base sm:text-lg font-bold leading-tight tracking-tight uppercase text-slate-900 group-hover:text-[#0D9488] transition">
+            <p className="text-base sm:text-lg font-bold leading-tight tracking-tight uppercase text-slate-900 group-hover:text-[#0D9488] transition">
               {hospitalInfo.name}
-            </h1>
+            </p>
             <p className="text-[10px] text-slate-500 font-medium tracking-widest uppercase">
               {hospitalInfo.nameUr} • LAYYAH
             </p>

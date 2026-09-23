@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://drnadirhussaindullu.netlify.app/sitemap.xml
