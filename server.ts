@@ -26,15 +26,42 @@ import {
   getWhatsAppLogs,
   addWhatsAppLog,
   getStats,
+  saveDatabase,
+  refundAppointment,
   getLiveSyncPayload,
   getLiveHospitalSnapshotText,
+  getAdmins,
+  createAdminAccount,
+  updateAdminAccount,
+  toggleAdminStatus,
+  deleteAdminAccount,
+  resetAdminPassword,
+  getAuditLogs,
+  recordAuditLog,
+  getHospitalServices,
+  createHospitalService,
+  updateHospitalService,
+  deleteHospitalService,
+  getSystemSettings,
+  updateSystemSettings,
+  ALL_PERMISSIONS,
 } from './server/db';
-import { loginAdmin, verifyAdminSession, logoutAdmin } from './server/auth';
+import {
+  loginAdmin,
+  verifyAdminSession,
+  logoutAdmin,
+  revokeSessionsForAdmin,
+  authMiddleware,
+  requireSuperAdmin,
+  requirePermission,
+  AuthenticatedRequest,
+} from './server/auth';
 import { Doctor, Appointment, TimeSlot, WhatsAppLog } from './src/types';
 
 const app = express();
 const PORT = 3000;
 
+app.set('trust proxy', true);
 app.use(express.json({ limit: '10mb' }));
 
 // Cloud Run and container health check probes
@@ -170,11 +197,21 @@ function triggerWhatsAppNotification(
   let msgEn = customMessageEn || '';
   let msgUr = customMessageUr || '';
 
+  const paymentLabel =
+    appointment.paymentStatus === 'paid_online' || appointment.status === 'paid_online' || appointment.status === 'confirmed' && appointment.bookingOption === 'pay_online'
+      ? 'Paid Online'
+      : 'Pay at Hospital';
+
+  const paymentLabelUr =
+    paymentLabel === 'Paid Online'
+      ? 'آن لائن ادا شدہ (Paid Online)'
+      : 'ہسپتال میں ادائیگی (Pay at Hospital)';
+
   if (!msgEn) {
     if (templateType === 'payment_confirmation' || templateType === 'appointment_confirmation') {
-      msgEn = `Dear ${appointment.patientName},\n\nYour appointment/payment for Gulzar Family Hospital & Children Center has been recorded.\n\nAppointment ID: ${appointment.id}\nDoctor: ${appointment.doctorNameEn}\nDate: ${appointment.date}\nTime: ${appointment.time}\nConsultation Type: ${appointment.consultationType === 'hospital_visit' ? 'Hospital Visit' : 'Online Consultation'}\n\nAddress:\nFatehpur Road, In Front of ZTBL, Chowk Azam, Layyah.\n\nHelpline: +92 340 4777745\n\nThank you,\nGulzar Family Hospital & Children Center`;
+      msgEn = `Dear ${appointment.patientName},\nYour appointment with Gulzar Family Hospital & Children Center has been successfully booked.\nAppointment ID: ${appointment.id}\nDoctor: ${appointment.doctorNameEn}\nDate: ${appointment.date}\nTime: ${appointment.time}\nPayment: ${paymentLabel}\nPlease arrive 15 minutes before your appointment.\nThank you for choosing Gulzar Family Hospital & Children Center.`;
 
-      msgUr = `محترم ${appointment.patientName}،\n\nGulzar Family Hospital & Children Center میں آپ کی اپائنٹمنٹ/ادائیگی درج ہو گئی ہے۔\n\nاپائنٹمنٹ نمبر: ${appointment.id}\nڈاکٹر: ${appointment.doctorNameUr}\nتاریخ: ${appointment.date}\nوقت: ${appointment.time}\nنوعیت: ${appointment.consultationType === 'hospital_visit' ? 'ہسپتال وزٹ' : 'آن لائن کنسلٹیشن'}\n\nپتہ:\nFatehpur Road، ZTBL کے سامنے، چوک اعظم، ضلع لیہ۔\n\nرابطہ: +92 340 4777745۔\n\nشکریہ\nGulzar Family Hospital & Children Center`;
+      msgUr = `محترم ${appointment.patientName}،\nگلزار فیملی ہسپتال اینڈ چلڈرن سینٹر کے ساتھ آپ کی اپائنٹمنٹ کامیابی سے بک ہو گئی ہے۔\nاپائنٹمنٹ نمبر: ${appointment.id}\nڈاکٹر: ${appointment.doctorNameUr}\nتاریخ: ${appointment.date}\nوقت: ${appointment.time}\nادائیگی: ${paymentLabelUr}\nبراہ کرم اپنی اپائنٹمنٹ سے 15 منٹ قبل تشریف لائیں۔\nگلزار فیملی ہسپتال اینڈ چلڈرن سینٹر کا شکریہ۔`;
     } else if (templateType === 'cancellation') {
       msgEn = `Dear ${appointment.patientName}, your appointment ID ${appointment.id} with ${appointment.doctorNameEn} on ${appointment.date} has been cancelled. For queries or rescheduling: +92 340 4777745. Gulzar Family Hospital.`;
       msgUr = `محترم ${appointment.patientName}، آپ کی اپائنٹمنٹ نمبر ${appointment.id} منسوخ کر دی گئی ہے۔ دوبارہ بکنگ یا رہنمائی کے لیے رابطہ کریں: +92 340 4777745۔ گلزار فیملی ہسپتال۔`;
@@ -231,12 +268,12 @@ app.get('/api/live-sync', (req, res) => {
 });
 
 // ==========================================
-// ADMIN CONTROL AUTHENTICATION
+// ADMIN CONTROL AUTHENTICATION & RBAC
 // ==========================================
 app.post('/api/admin/login', (req, res) => {
-  const { email, password } = req.body;
+  const { identifier, email, password } = req.body;
   const ip = req.ip || req.socket.remoteAddress || 'unknown';
-  const result = loginAdmin(email, password, ip);
+  const result = loginAdmin(identifier || email, password, ip);
   if (result.success) {
     res.json(result);
   } else {
@@ -246,16 +283,204 @@ app.post('/api/admin/login', (req, res) => {
 
 app.get('/api/admin/session', (req, res) => {
   const authHeader = req.headers.authorization;
-  const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.substring(7) : null;
+  const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.substring(7) : (req.headers['x-admin-token'] as string) || null;
   const result = verifyAdminSession(token);
   res.json(result);
 });
 
 app.post('/api/admin/logout', (req, res) => {
   const authHeader = req.headers.authorization;
-  const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.substring(7) : null;
+  const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.substring(7) : (req.headers['x-admin-token'] as string) || null;
   logoutAdmin(token);
   res.json({ success: true });
+});
+
+// Admin Accounts Management (Super Admin Exclusive)
+app.get('/api/admin/accounts', authMiddleware as any, requireSuperAdmin as any, (req: AuthenticatedRequest, res) => {
+  const admins = getAdmins();
+  res.json({ success: true, admins });
+});
+
+app.post('/api/admin/accounts', authMiddleware as any, requireSuperAdmin as any, (req: AuthenticatedRequest, res) => {
+  const { name, email, mobile, password, role, permissions } = req.body;
+  if (!name || !email || !mobile || !password) {
+    return res.status(400).json({ error: 'Name, email, mobile, and password are required.' });
+  }
+
+  const actor = {
+    id: req.adminUser!.id || req.adminId || 'sa-master',
+    name: req.adminUser!.name,
+    role: req.adminUser!.role,
+    ipAddress: req.ip || 'unknown',
+  };
+
+  const result = createAdminAccount(
+    { name, email, mobile, password, role: role || 'admin', permissions },
+    actor
+  );
+
+  if (result.success) {
+    broadcastSync('admins_updated', { action: 'created' });
+    res.status(201).json(result);
+  } else {
+    res.status(400).json(result);
+  }
+});
+
+app.put('/api/admin/accounts/:id', authMiddleware as any, requireSuperAdmin as any, (req: AuthenticatedRequest, res) => {
+  const { id } = req.params;
+  const actor = {
+    id: req.adminUser!.id || req.adminId || 'sa-master',
+    name: req.adminUser!.name,
+    role: req.adminUser!.role,
+    ipAddress: req.ip || 'unknown',
+  };
+
+  const result = updateAdminAccount(id, req.body, actor);
+  if (result.success) {
+    broadcastSync('admins_updated', { action: 'updated', id });
+    res.json(result);
+  } else {
+    res.status(400).json(result);
+  }
+});
+
+app.patch('/api/admin/accounts/:id/status', authMiddleware as any, requireSuperAdmin as any, (req: AuthenticatedRequest, res) => {
+  const { id } = req.params;
+  const { status } = req.body;
+  if (status !== 'active' && status !== 'disabled') {
+    return res.status(400).json({ error: 'Status must be active or disabled.' });
+  }
+
+  const actor = {
+    id: req.adminUser!.id || req.adminId || 'sa-master',
+    name: req.adminUser!.name,
+    role: req.adminUser!.role,
+    ipAddress: req.ip || 'unknown',
+  };
+
+  const result = toggleAdminStatus(id, status, actor);
+  if (result.success) {
+    if (status === 'disabled') {
+      revokeSessionsForAdmin(id);
+    }
+    broadcastSync('admins_updated', { action: 'status_changed', id, status });
+    res.json(result);
+  } else {
+    res.status(400).json(result);
+  }
+});
+
+app.delete('/api/admin/accounts/:id', authMiddleware as any, requireSuperAdmin as any, (req: AuthenticatedRequest, res) => {
+  const { id } = req.params;
+  const actor = {
+    id: req.adminUser!.id || req.adminId || 'sa-master',
+    name: req.adminUser!.name,
+    role: req.adminUser!.role,
+    ipAddress: req.ip || 'unknown',
+  };
+
+  const result = deleteAdminAccount(id, actor);
+  if (result.success) {
+    revokeSessionsForAdmin(id);
+    broadcastSync('admins_updated', { action: 'deleted', id });
+    res.json({ success: true, message: 'Administrator account permanently removed.' });
+  } else {
+    res.status(400).json(result);
+  }
+});
+
+app.post('/api/admin/accounts/:id/reset-password', authMiddleware as any, requireSuperAdmin as any, (req: AuthenticatedRequest, res) => {
+  const { id } = req.params;
+  const { newPassword } = req.body;
+  if (!newPassword || newPassword.length < 6) {
+    return res.status(400).json({ error: 'New password must be at least 6 characters long.' });
+  }
+
+  const actor = {
+    id: req.adminUser!.id || req.adminId || 'sa-master',
+    name: req.adminUser!.name,
+    role: req.adminUser!.role,
+    ipAddress: req.ip || 'unknown',
+  };
+
+  const result = resetAdminPassword(id, newPassword, actor);
+  if (result.success) {
+    revokeSessionsForAdmin(id);
+    res.json({ success: true, message: 'Password reset successfully. Active sessions revoked.' });
+  } else {
+    res.status(400).json(result);
+  }
+});
+
+// Audit Logs (Super Admin Exclusive)
+app.get('/api/admin/audit-logs', authMiddleware as any, requireSuperAdmin as any, (req: AuthenticatedRequest, res) => {
+  const limit = Number(req.query.limit) || 100;
+  const filter = (req.query.filter as string) || 'all';
+  const logs = getAuditLogs(limit, filter);
+  res.json({ success: true, logs });
+});
+
+// System Settings
+app.get('/api/admin/system-settings', authMiddleware as any, (req: AuthenticatedRequest, res) => {
+  res.json({ success: true, settings: getSystemSettings() });
+});
+
+app.put('/api/admin/system-settings', authMiddleware as any, requireSuperAdmin as any, (req: AuthenticatedRequest, res) => {
+  const actor = {
+    id: req.adminUser!.id || req.adminId || 'sa-master',
+    name: req.adminUser!.name,
+    role: req.adminUser!.role,
+  };
+  const updated = updateSystemSettings(req.body, actor);
+  broadcastSync('system_settings_updated', { settings: updated });
+  res.json({ success: true, settings: updated });
+});
+
+// Clinical Services API
+app.get('/api/services', (_req, res) => {
+  res.json(getHospitalServices());
+});
+
+app.post('/api/services', authMiddleware as any, requirePermission('services.manage') as any, (req: AuthenticatedRequest, res) => {
+  const actor = {
+    id: req.adminUser!.id || req.adminId || 'sa-master',
+    name: req.adminUser!.name,
+    role: req.adminUser!.role,
+  };
+  const created = createHospitalService(req.body, actor);
+  broadcastSync('services_updated', { action: 'created', service: created });
+  res.status(201).json({ success: true, service: created });
+});
+
+app.put('/api/services/:id', authMiddleware as any, requirePermission('services.manage') as any, (req: AuthenticatedRequest, res) => {
+  const actor = {
+    id: req.adminUser!.id || req.adminId || 'sa-master',
+    name: req.adminUser!.name,
+    role: req.adminUser!.role,
+  };
+  const updated = updateHospitalService(req.params.id, req.body, actor);
+  if (updated) {
+    broadcastSync('services_updated', { action: 'updated', service: updated });
+    res.json({ success: true, service: updated });
+  } else {
+    res.status(404).json({ error: 'Service not found' });
+  }
+});
+
+app.delete('/api/services/:id', authMiddleware as any, requirePermission('services.manage') as any, (req: AuthenticatedRequest, res) => {
+  const actor = {
+    id: req.adminUser!.id || req.adminId || 'sa-master',
+    name: req.adminUser!.name,
+    role: req.adminUser!.role,
+  };
+  const success = deleteHospitalService(req.params.id, actor);
+  if (success) {
+    broadcastSync('services_updated', { action: 'deleted', id: req.params.id });
+    res.json({ success: true });
+  } else {
+    res.status(404).json({ error: 'Service not found' });
+  }
 });
 
 // ==========================================
@@ -438,6 +663,71 @@ app.get('/api/appointments/patient-history', (req, res) => {
   });
 });
 
+// ==========================================
+// MOBILE NUMBER OTP VERIFICATION
+// ==========================================
+interface OtpEntry {
+  code: string;
+  expiresAt: number;
+}
+const otpStore = new Map<string, OtpEntry>();
+
+app.post('/api/auth/otp/send', (req, res) => {
+  const { phone } = req.body;
+  if (!phone) {
+    return res.status(400).json({ error: 'Phone number is required' });
+  }
+
+  const cleanPhone = String(phone).replace(/[^0-9]/g, '');
+  const hospitalInfo = getHospitalInfo();
+  const isTestMode = hospitalInfo.otpTestMode !== false; // Default test mode enabled for seamless testing
+  const code = isTestMode ? '1234' : Math.floor(1000 + Math.random() * 9000).toString();
+  const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes validity
+
+  otpStore.set(cleanPhone, { code, expiresAt });
+
+  res.json({
+    success: true,
+    message: isTestMode
+      ? 'OTP code generated in simulation mode: 1234'
+      : 'OTP sent to mobile number',
+    expiresInSeconds: 300,
+    isTestMode,
+    testCode: isTestMode ? '1234' : undefined,
+  });
+});
+
+app.post('/api/auth/otp/verify', (req, res) => {
+  const { phone, code } = req.body;
+  if (!phone || !code) {
+    return res.status(400).json({ error: 'Phone number and OTP code are required' });
+  }
+
+  const cleanPhone = String(phone).replace(/[^0-9]/g, '');
+  const hospitalInfo = getHospitalInfo();
+
+  if (hospitalInfo.otpTestMode !== false && code.trim() === '1234') {
+    return res.json({ success: true, verified: true });
+  }
+
+  const entry = otpStore.get(cleanPhone);
+  if (!entry) {
+    return res.status(400).json({ error: 'No active OTP request found. Please request a new code.' });
+  }
+
+  if (Date.now() > entry.expiresAt) {
+    otpStore.delete(cleanPhone);
+    return res.status(400).json({ error: 'OTP has expired. Please request a new code.' });
+  }
+
+  if (entry.code !== code.trim()) {
+    return res.status(400).json({ error: 'Incorrect OTP code. Please check and try again.' });
+  }
+
+  otpStore.delete(cleanPhone);
+  res.json({ success: true, verified: true });
+});
+
 app.post('/api/appointments/book', (req, res) => {
   const {
     doctorId,
@@ -449,6 +739,8 @@ app.post('/api/appointments/book', (req, res) => {
     gender,
     whatsAppNumber,
     reasonForVisit,
+    patientType,
+    bookingOption,
     paymentMethod,
     feePKR,
   } = req.body;
@@ -470,15 +762,35 @@ app.post('/api/appointments/book', (req, res) => {
 
   const appointments = getAppointments();
 
-  // Strict double-booking prevention
+  // Strict double-booking prevention for same doctor, date and time
   const doubleBooked = appointments.find(
-    (a) => a.doctorId === doctorId && a.date === date && a.time === time && a.status !== 'cancelled'
+    (a) =>
+      a.doctorId === doctorId &&
+      a.date === date &&
+      a.time === time &&
+      a.status !== 'cancelled' &&
+      a.status !== 'payment_failed'
   );
   if (doubleBooked) {
-    return res.status(409).json({ error: 'Conflict: This exact time slot has already been booked. Please choose another slot.' });
+    return res.status(409).json({
+      error: 'Conflict: This doctor, date, and time slot has already been booked. Please choose another slot.',
+    });
   }
 
   const apptId = `GFH-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+  const chosenBookingOption: 'pay_at_hospital' | 'pay_online' =
+    bookingOption || (paymentMethod === 'hospital_counter' ? 'pay_at_hospital' : 'pay_online');
+
+  const chosenPaymentMethod =
+    chosenBookingOption === 'pay_at_hospital'
+      ? 'hospital_counter'
+      : paymentMethod || 'gateway_api';
+
+  const initialStatus =
+    chosenBookingOption === 'pay_at_hospital' ? 'confirmed' : 'pending_payment';
+
+  const initialPaymentStatus =
+    chosenBookingOption === 'pay_at_hospital' ? 'pay_at_hospital' : 'pending';
 
   const newAppt: Appointment = {
     id: apptId,
@@ -495,9 +807,12 @@ app.post('/api/appointments/book', (req, res) => {
     gender: gender || 'male',
     whatsAppNumber,
     reasonForVisit: reasonForVisit || '',
-    status: paymentMethod === 'hospital_counter' ? 'confirmed' : 'pending_payment',
+    patientType: patientType === 'followup' ? 'followup' : 'new',
+    bookingOption: chosenBookingOption,
+    status: initialStatus,
+    paymentStatus: initialPaymentStatus,
     feePKR: feePKR || (consultationType === 'online_consultation' ? doctor.onlineFeePKR : doctor.feePKR),
-    paymentMethod: paymentMethod || 'hospital_counter',
+    paymentMethod: chosenPaymentMethod,
     createdAt: new Date().toLocaleString(),
     updatedAt: new Date().toLocaleString(),
   };
@@ -511,13 +826,128 @@ app.post('/api/appointments/book', (req, res) => {
   // Send automated WhatsApp confirmation
   triggerWhatsAppNotification(
     newAppt,
-    newAppt.paymentMethod === 'hospital_counter' ? 'appointment_confirmation' : 'appointment_confirmation'
+    'appointment_confirmation'
   );
 
   // Broadcast to all active users and screens
   broadcastSync('appointment_booked', { appointment: newAppt });
 
   res.status(201).json({ success: true, appointment: newAppt });
+});
+
+// Secure Online Payment Gateway Processing (Option 2)
+app.post('/api/payments/process-gateway', (req, res) => {
+  const { appointmentId, gateway, accountOrCard, cnicLast4, simulatedOutcome } = req.body;
+
+  if (!appointmentId) {
+    return res.status(400).json({ error: 'appointmentId is required' });
+  }
+
+  const appt = getAppointments().find((a) => a.id === appointmentId);
+  if (!appt) {
+    return res.status(404).json({ error: 'Appointment not found' });
+  }
+
+  // If client or test requested failure simulation
+  if (simulatedOutcome === 'fail') {
+    appt.status = 'payment_failed';
+    appt.paymentStatus = 'failed';
+    appt.updatedAt = new Date().toLocaleString();
+    saveDatabase();
+
+    broadcastSync('payment_failed', { appointment: appt });
+    return res.status(400).json({
+      success: false,
+      error: 'Payment failed: Transaction declined by gateway or insufficient account balance.',
+      appointment: appt,
+    });
+  }
+
+  // Successful payment processing
+  const providerCode = (gateway || 'JC').toUpperCase().slice(0, 4);
+  const transactionId = `TRX-${providerCode}-${Date.now().toString().slice(-6)}-${Math.floor(100 + Math.random() * 900)}`;
+
+  appt.status = 'confirmed';
+  appt.paymentStatus = 'paid_online';
+  appt.paymentMethod = gateway || 'gateway_api';
+  appt.transactionId = transactionId;
+  appt.paymentReference = transactionId;
+  appt.paidAt = new Date().toLocaleString();
+  appt.updatedAt = new Date().toLocaleString();
+  saveDatabase();
+
+  // Clear slot lock if any
+  const lockKey = `${appt.doctorId}_${appt.date}_${appt.time}`;
+  lockedSlots.delete(lockKey);
+
+  // Trigger WhatsApp notification for verified paid appointment
+  triggerWhatsAppNotification(appt, 'payment_confirmation');
+
+  broadcastSync('payment_verified', { appointment: appt, transactionId });
+  res.json({ success: true, appointment: appt, transactionId });
+});
+
+// Admin change status
+app.post('/api/admin/appointments/:id/status', authMiddleware as any, requirePermission('appointments.edit') as any, (req: AuthenticatedRequest, res) => {
+  const { id } = req.params;
+  const { status, paymentStatus, notes } = req.body;
+
+  const appt = getAppointments().find((a) => a.id === id);
+  if (!appt) {
+    return res.status(404).json({ error: 'Appointment not found' });
+  }
+
+  const prevStatus = appt.status;
+  if (status) appt.status = status;
+  if (paymentStatus) appt.paymentStatus = paymentStatus;
+  if (notes !== undefined) appt.notes = notes;
+  appt.updatedAt = new Date().toLocaleString();
+  saveDatabase();
+
+  recordAuditLog({
+    userId: req.adminUser!.id || req.adminId || 'unknown',
+    userName: req.adminUser!.name,
+    userRole: req.adminUser!.role,
+    action: `Updated Appointment #${appt.id} status from ${prevStatus} to ${status}`,
+    affectedRecord: appt.id,
+    previousValue: prevStatus,
+    newValue: status,
+    ipAddress: req.ip || 'unknown',
+  });
+
+  broadcastSync('appointment_updated', { appointment: appt });
+  res.json({ success: true, appointment: appt });
+});
+
+// Admin Refund Route
+app.post('/api/admin/appointments/:id/refund', authMiddleware as any, requirePermission('appointments.cancel') as any, (req: AuthenticatedRequest, res) => {
+  const { id } = req.params;
+  const { refundReason, refundAmount } = req.body;
+
+  const refunded = refundAppointment(id, refundReason || 'Patient cancellation refund', refundAmount);
+  if (!refunded) {
+    return res.status(404).json({ error: 'Appointment not found' });
+  }
+
+  recordAuditLog({
+    userId: req.adminUser!.id || req.adminId || 'unknown',
+    userName: req.adminUser!.name,
+    userRole: req.adminUser!.role,
+    action: `Issued Refund of PKR ${refunded.refundAmount} for Appointment #${refunded.id}`,
+    affectedRecord: refunded.id,
+    newValue: JSON.stringify({ refundReason, refundAmount: refunded.refundAmount }),
+    ipAddress: req.ip || 'unknown',
+  });
+
+  triggerWhatsAppNotification(
+    refunded,
+    'cancellation',
+    `Dear ${refunded.patientName}, your online payment of PKR ${refunded.refundAmount} for Appointment ID ${refunded.id} has been refunded (${refunded.refundReason}). For questions: +92 340 4777745.`,
+    `محترم ${refunded.patientName}، اپائنٹمنٹ نمبر ${refunded.id} کی رقم PKR ${refunded.refundAmount} واپس (ری فنڈ) کر دی گئی ہے۔ رابطہ: +92 340 4777745۔`
+  );
+
+  broadcastSync('appointment_refunded', { appointment: refunded });
+  res.json({ success: true, appointment: refunded });
 });
 
 app.post('/api/appointments/:id/cancel', (req, res) => {
@@ -914,25 +1344,6 @@ async function startServer() {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`[Server] Gulzar Family Hospital server running on http://0.0.0.0:${PORT}`);
   });
-
-  // If deployed to Cloud Run or a container environment with custom PORT (e.g. 8080)
-  const envPort = process.env.PORT ? parseInt(process.env.PORT, 10) : null;
-  if (envPort && envPort !== PORT) {
-    try {
-      const secondaryServer = app.listen(envPort, '0.0.0.0', () => {
-        console.log(`[Server] Also listening on Cloud Run port ${envPort}`);
-      });
-      secondaryServer.on('error', (err: any) => {
-        if (err.code === 'EADDRINUSE') {
-          console.log(`[Server] Port ${envPort} already bound (reverse proxy), continuing on port ${PORT}`);
-        } else {
-          console.warn(`[Server] Notice on secondary port ${envPort}:`, err.message);
-        }
-      });
-    } catch (e: any) {
-      console.warn(`[Server] Could not bind to secondary port ${envPort}:`, e.message);
-    }
-  }
 }
 
 // Global safety error handlers

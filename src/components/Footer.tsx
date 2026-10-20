@@ -104,6 +104,13 @@ export const Footer: React.FC<FooterProps> = ({
 
             <div className="space-y-1 text-xs">
               <button
+                onClick={() => setActiveTab('about')}
+                className="block text-teal-300 font-bold hover:underline cursor-pointer"
+              >
+                🏥 About Us / ہمارے بارے میں
+              </button>
+
+              <button
                 onClick={onOpenBooking}
                 className="block text-teal-400 font-bold hover:underline cursor-pointer"
               >

@@ -30,7 +30,10 @@ interface HospitalDataContextType {
   cancelAppointment: (id: string) => Promise<{ success: boolean; error?: string }>;
   rescheduleAppointment: (id: string, date: string, time: string) => Promise<{ success: boolean; appointment?: Appointment; error?: string }>;
   submitPayment: (id: string, paymentMethod: string, paymentReference: string, paymentScreenshotUrl?: string) => Promise<{ success: boolean; appointment?: Appointment; error?: string }>;
-  verifyAppointment: (id: string, action: 'approve' | 'reject' | 'checkin' | 'complete' | 'cancel', notes?: string) => Promise<{ success: boolean; appointment?: Appointment; error?: string }>;
+  processPaymentGateway: (payload: { appointmentId: string; gateway: string; accountOrCard?: string; cnicLast4?: string; simulatedOutcome?: 'success' | 'fail' }) => Promise<{ success: boolean; appointment?: Appointment; transactionId?: string; error?: string }>;
+  refundAppointment: (id: string, refundReason: string, refundAmount?: number) => Promise<{ success: boolean; appointment?: Appointment; error?: string }>;
+  updateAppointmentStatus: (id: string, status: any, paymentStatus?: any, notes?: string) => Promise<{ success: boolean; appointment?: Appointment; error?: string }>;
+  verifyAppointment: (id: string, action: 'approve' | 'reject' | 'checkin' | 'complete' | 'cancel' | 'refund', notes?: string) => Promise<{ success: boolean; appointment?: Appointment; error?: string }>;
   updateDoctorSchedule: (doctor: Doctor) => Promise<{ success: boolean; doctor?: Doctor; error?: string }>;
   toggleDoctorLeave: (doctorId: string, isAvailable: boolean, unavailabilityReason?: string) => Promise<{ success: boolean; doctor?: Doctor; error?: string }>;
   createHospitalEvent: (eventData: Omit<HospitalEvent, 'id' | 'createdAt' | 'updatedAt'>) => Promise<{ success: boolean; event?: HospitalEvent; error?: string }>;
@@ -269,9 +272,87 @@ export const HospitalDataProvider: React.FC<{ children: ReactNode }> = ({ childr
     }
   };
 
+  const processPaymentGateway = async (payload: {
+    appointmentId: string;
+    gateway: string;
+    accountOrCard?: string;
+    cnicLast4?: string;
+    simulatedOutcome?: 'success' | 'fail';
+  }) => {
+    setIsSyncing(true);
+    try {
+      const res = await fetch('/api/payments/process-gateway', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        return {
+          success: false,
+          appointment: data.appointment,
+          error: data.error || 'Payment gateway declined transaction',
+        };
+      }
+      await refreshAll();
+      return { success: true, appointment: data.appointment, transactionId: data.transactionId };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Network error processing payment' };
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const refundAppointment = async (id: string, refundReason: string, refundAmount?: number) => {
+    setIsSyncing(true);
+    try {
+      const res = await fetch(`/api/admin/appointments/${id}/refund`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refundReason, refundAmount }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        return { success: false, error: data.error || 'Failed to issue refund' };
+      }
+      await refreshAll();
+      return { success: true, appointment: data.appointment };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Network error issuing refund' };
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const updateAppointmentStatus = async (
+    id: string,
+    status: any,
+    paymentStatus?: any,
+    notes?: string
+  ) => {
+    setIsSyncing(true);
+    try {
+      const res = await fetch(`/api/admin/appointments/${id}/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status, paymentStatus, notes }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        return { success: false, error: data.error || 'Failed to update status' };
+      }
+      await refreshAll();
+      return { success: true, appointment: data.appointment };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Network error updating status' };
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   const verifyAppointment = async (
     id: string,
-    action: 'approve' | 'reject' | 'checkin' | 'complete' | 'cancel',
+    action: 'approve' | 'reject' | 'checkin' | 'complete' | 'cancel' | 'refund',
     notes?: string
   ) => {
     setIsSyncing(true);
@@ -454,6 +535,9 @@ export const HospitalDataProvider: React.FC<{ children: ReactNode }> = ({ childr
         cancelAppointment,
         rescheduleAppointment,
         submitPayment,
+        processPaymentGateway,
+        refundAppointment,
+        updateAppointmentStatus,
         verifyAppointment,
         updateDoctorSchedule,
         toggleDoctorLeave,

@@ -1,6 +1,6 @@
 {
   "name": "Gulzar Family Hospital & Children Center",
   "description": "Official online appointment, JazzCash & Easypaisa payment verification, and automated WhatsApp healthcare system for Gulzar Family Hospital & Children Center, Layyah.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": ["microphone", "camera"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

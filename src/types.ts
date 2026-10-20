@@ -4,6 +4,10 @@ export type ConsultationType = 'hospital_visit' | 'online_consultation';
 
 export type Gender = 'male' | 'female' | 'other';
 
+export type PatientType = 'new' | 'followup';
+
+export type BookingOption = 'pay_at_hospital' | 'pay_online';
+
 export type AppointmentStatus =
   | 'pending_payment'
   | 'payment_submitted'
@@ -12,9 +16,19 @@ export type AppointmentStatus =
   | 'checked_in'
   | 'completed'
   | 'cancelled'
-  | 'no_show';
+  | 'no_show'
+  | 'pay_at_hospital'
+  | 'paid_online'
+  | 'payment_failed'
+  | 'refund_requested'
+  | 'refunded';
 
-export type PaymentMethod = 'jazzcash' | 'easypaisa' | 'gateway_api' | 'hospital_counter';
+export type PaymentMethod =
+  | 'jazzcash'
+  | 'easypaisa'
+  | 'gateway_api'
+  | 'hospital_counter'
+  | 'bank_card';
 
 export interface DoctorQualification {
   degree: string;
@@ -44,8 +58,11 @@ export interface Doctor {
   breakEndTime?: string; // e.g. '14:00'
   slotDurationMinutes: number; // e.g. 15
   maxPatientsPerDay: number;
+  maxPatientsPerSlot?: number;
   acceptsOnline: boolean;
   acceptsHospitalVisit: boolean;
+  onlinePaymentEnabled?: boolean;
+  payAtHospitalEnabled?: boolean;
   isAvailable: boolean;
   unavailabilityReason?: string;
   // Specific detail view attributes:
@@ -83,11 +100,19 @@ export interface Appointment {
   gender: Gender;
   whatsAppNumber: string;
   reasonForVisit: string;
+  patientType?: PatientType;
+  bookingOption?: BookingOption;
   status: AppointmentStatus;
   feePKR: number;
   paymentMethod?: PaymentMethod;
+  paymentStatus?: 'pay_at_hospital' | 'paid_online' | 'pending' | 'failed' | 'refunded';
   paymentReference?: string;
   paymentScreenshotUrl?: string;
+  transactionId?: string;
+  paidAt?: string;
+  refundReason?: string;
+  refundAmount?: number;
+  refundedAt?: string;
   createdAt: string;
   updatedAt: string;
   notes?: string;
@@ -123,6 +148,12 @@ export interface HospitalInfoData {
   whatsApp: string;
   jazzCash: string;
   easyPaisa: string;
+  onlinePaymentEnabled?: boolean;
+  payAtHospitalEnabled?: boolean;
+  requireOtpVerification?: boolean;
+  otpTestMode?: boolean;
+  activePaymentGateway?: 'all' | 'jazzcash' | 'easypaisa' | 'bank_card';
+  defaultConsultationFee?: number;
   emergencyNoticeEn?: string;
   emergencyNoticeUr?: string;
   activeAnnouncementEn?: string;
@@ -202,8 +233,73 @@ export interface LiveSyncPayload {
   lastUpdated: string;
 }
 
+export type AdminRole = 'super_admin' | 'admin';
+
+export type AdminPermission =
+  | 'appointments.view'
+  | 'appointments.create'
+  | 'appointments.edit'
+  | 'appointments.cancel'
+  | 'appointments.delete'
+  | 'patients.view'
+  | 'doctors.manage'
+  | 'departments.manage'
+  | 'services.manage'
+  | 'content.manage'
+  | 'reports.view'
+  | 'admin.manage'
+  | 'system.settings'
+  | 'audit.view';
+
 export interface AdminUser {
+  id?: string;
   email: string;
+  mobile?: string;
   name: string;
-  role: 'super_admin' | 'admin';
+  role: AdminRole;
+  status?: 'active' | 'disabled';
+  permissions?: AdminPermission[];
+  createdAt?: string;
+  lastLogin?: string;
 }
+
+export interface AdminAccount {
+  id: string;
+  name: string;
+  email: string;
+  mobile: string;
+  role: AdminRole;
+  status: 'active' | 'disabled';
+  permissions: AdminPermission[];
+  createdAt: string;
+  lastLogin?: string;
+  createdBy?: string;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  userId: string;
+  userName: string;
+  userRole: AdminRole;
+  action: string;
+  timestamp: string;
+  affectedRecord?: string;
+  previousValue?: string;
+  newValue?: string;
+  ipAddress?: string;
+  userAgent?: string;
+}
+
+export interface HospitalClinicalService {
+  id: string;
+  departmentId: string;
+  nameEn: string;
+  nameUr: string;
+  category: 'maternity' | 'pediatric' | 'family_medicine' | 'respiratory' | 'cardiology' | 'laboratory' | 'emergency' | 'general';
+  descriptionEn: string;
+  descriptionUr: string;
+  isAvailable24x7: boolean;
+  standardFeePKR?: number;
+  featured?: boolean;
+}
+

@@ -29,6 +29,7 @@ interface HeroProps {
   onOpenBooking: () => void;
   onOpenPayment: () => void;
   onNavigateDoctors: () => void;
+  onNavigateAbout?: () => void;
 }
 
 export const Hero: React.FC<HeroProps> = ({
@@ -37,6 +38,7 @@ export const Hero: React.FC<HeroProps> = ({
   onOpenBooking,
   onOpenPayment,
   onNavigateDoctors,
+  onNavigateAbout,
 }) => {
   const isUr = lang === 'ur';
   const [isBannerModalOpen, setIsBannerModalOpen] = useState(false);
@@ -202,6 +204,15 @@ export const Hero: React.FC<HeroProps> = ({
                   <Heart className="w-3 h-3 text-rose-500 fill-rose-500" />
                   <span>{isUr ? 'صحت کا آسان راستہ' : 'Sehat Ka Asaan Rasta'}</span>
                 </span>
+                {onNavigateAbout && (
+                  <button
+                    onClick={onNavigateAbout}
+                    className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-slate-100 hover:bg-teal-50 hover:text-teal-700 hover:border-teal-200 border border-slate-200 text-slate-700 text-[11px] font-bold transition cursor-pointer"
+                  >
+                    <span>{isUr ? '🏥 ہسپتال کا تعارف (About Us)' : '🏥 About Us & Services'}</span>
+                    <ChevronRight className="w-3 h-3" />
+                  </button>
+                )}
               </div>
 
               <h1 className="text-3xl sm:text-4xl lg:text-5xl font-serif text-slate-900 font-bold leading-tight">
