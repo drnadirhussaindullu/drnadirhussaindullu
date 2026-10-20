@@ -1,8 +1,12 @@
 import React, { useState } from 'react';
-import { Appointment, Doctor, Language, HospitalEvent, HospitalInfoData, AdminUser } from '../types';
+import { Appointment, Doctor, Language, HospitalEvent, HospitalInfoData, AdminUser, AdminPermission } from '../types';
 import { useHospitalData } from '../context/HospitalDataContext';
+import { AdminManagementTab } from './admin/AdminManagementTab';
+import { AuditLogsTab } from './admin/AuditLogsTab';
+import { ClinicalServicesTab } from './admin/ClinicalServicesTab';
 import {
   ShieldCheck,
+  ShieldAlert,
   CheckCircle2,
   XCircle,
   Clock,
@@ -14,10 +18,12 @@ import {
   AlertCircle,
   Building2,
   Smartphone,
+  Settings,
   Save,
   Loader2,
   UserCheck,
   UserX,
+  Users,
   Plus,
   Trash2,
   Edit2,
@@ -27,6 +33,8 @@ import {
   Stethoscope,
   Megaphone,
   LogOut,
+  FileText,
+  Lock,
 } from 'lucide-react';
 
 interface AdminDashboardProps {
@@ -54,6 +62,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     isSyncing,
     refreshAll,
     verifyAppointment,
+    refundAppointment,
+    updateAppointmentStatus,
     updateDoctorSchedule,
     toggleDoctorLeave,
     createHospitalEvent,
@@ -63,13 +73,43 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     updateHospitalInfo,
   } = useHospitalData();
 
+  const token =
+    typeof window !== 'undefined'
+      ? localStorage.getItem('gfh_admin_token') || sessionStorage.getItem('gfh_admin_token') || ''
+      : '';
+
+  const isSuperAdmin = adminUser?.role === 'super_admin';
+  const userPermissions: AdminPermission[] = adminUser?.permissions || [];
+  const can = (permission: AdminPermission): boolean => {
+    if (isSuperAdmin) return true;
+    return userPermissions.includes(permission);
+  };
+
   const [activeTab, setActiveTab] = useState<
-    'payments' | 'schedule' | 'events' | 'patients' | 'announcements' | 'settings'
+    'payments' | 'schedule' | 'services' | 'events' | 'patients' | 'announcements' | 'admins' | 'audit' | 'settings'
   >('payments');
 
   const [selectedScreenshotUrl, setSelectedScreenshotUrl] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [filterStatus, setFilterStatus] = useState<string>('all');
+  const [selectedDoctorFilter, setSelectedDoctorFilter] = useState<string>('all');
+  const [selectedPaymentFilter, setSelectedPaymentFilter] = useState<string>('all');
+  const [selectedDateFilter, setSelectedDateFilter] = useState<string>('all');
+
+  // Refund Modal State
+  const [refundModalAppt, setRefundModalAppt] = useState<Appointment | null>(null);
+  const [refundReason, setRefundReason] = useState<string>('Patient requested cancellation within policy window');
+  const [isRefunding, setIsRefunding] = useState<boolean>(false);
+
+  // System Settings State
+  const [systemSettings, setSystemSettings] = useState({
+    onlinePaymentEnabled: hospitalInfo.onlinePaymentEnabled ?? true,
+    payAtHospitalEnabled: hospitalInfo.payAtHospitalEnabled ?? true,
+    requireOtpVerification: hospitalInfo.requireOtpVerification ?? true,
+    otpTestMode: hospitalInfo.otpTestMode ?? true,
+    defaultConsultationFee: hospitalInfo.defaultConsultationFee ?? 1500,
+  });
+  const [isSavingSettings, setIsSavingSettings] = useState<boolean>(false);
 
   // Schedule Tab Selected Doctor
   const [selectedDoctorId, setSelectedDoctorId] = useState<string>(doctors[0]?.id || 'doc-1');
@@ -251,11 +291,38 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       a.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
       a.patientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
       a.whatsAppNumber.includes(searchQuery) ||
-      (a.paymentReference && a.paymentReference.toLowerCase().includes(searchQuery.toLowerCase()));
+      (a.paymentReference && a.paymentReference.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (a.transactionId && a.transactionId.toLowerCase().includes(searchQuery.toLowerCase()));
+
+    const matchesDoctor = selectedDoctorFilter === 'all' || a.doctorId === selectedDoctorFilter;
+    const matchesDate = selectedDateFilter === 'all' || a.date === selectedDateFilter;
+
+    let matchesPayment = true;
+    if (selectedPaymentFilter === 'pay_at_hospital') {
+      matchesPayment = a.bookingOption === 'pay_at_hospital' || a.paymentStatus === 'pay_at_hospital';
+    } else if (selectedPaymentFilter === 'paid_online') {
+      matchesPayment = a.paymentStatus === 'paid_online' || (a.bookingOption === 'pay_online' && a.status === 'confirmed');
+    } else if (selectedPaymentFilter === 'pending_payment') {
+      matchesPayment = a.paymentStatus === 'pending_payment' || a.status === 'pending_payment' || a.status === 'payment_submitted';
+    } else if (selectedPaymentFilter === 'refunded') {
+      matchesPayment = a.paymentStatus === 'refunded' || a.status === 'refunded';
+    }
 
     const matchesStatus = filterStatus === 'all' || a.status === filterStatus;
-    return matchesQuery && matchesStatus;
+    return matchesQuery && matchesDoctor && matchesDate && matchesPayment && matchesStatus;
   });
+
+  const payAtHospitalCount = appointments.filter(
+    (a) => a.bookingOption === 'pay_at_hospital' || a.paymentStatus === 'pay_at_hospital'
+  ).length;
+
+  const paidOnlineCount = appointments.filter(
+    (a) => a.paymentStatus === 'paid_online' || (a.bookingOption === 'pay_online' && a.status === 'confirmed')
+  ).length;
+
+  const totalOnlineRevenue = appointments
+    .filter((a) => a.paymentStatus === 'paid_online' || (a.bookingOption === 'pay_online' && a.status === 'confirmed'))
+    .reduce((sum, a) => sum + (a.feePKR || 0), 0);
 
   return (
     <div className="max-w-7xl mx-auto py-8 px-4 space-y-8">
@@ -280,16 +347,37 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
         <div className="flex flex-wrap items-center gap-3">
           {adminUser && (
-            <div className="bg-slate-800/90 border border-slate-700 px-3.5 py-2 rounded-xl flex items-center gap-2.5 text-xs">
-              <div className="w-8 h-8 rounded-lg bg-teal-500/20 border border-teal-500/30 text-teal-400 flex items-center justify-center font-bold shrink-0">
-                <UserCheck className="w-4 h-4" />
+            <div
+              className={`border px-3.5 py-2 rounded-xl flex items-center gap-2.5 text-xs ${
+                isSuperAdmin
+                  ? 'bg-amber-950/40 border-amber-500/40 text-amber-200'
+                  : 'bg-slate-800/90 border-slate-700 text-slate-200'
+              }`}
+            >
+              <div
+                className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold shrink-0 ${
+                  isSuperAdmin
+                    ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                    : 'bg-teal-500/20 text-teal-400 border border-teal-500/30'
+                }`}
+              >
+                {isSuperAdmin ? <ShieldAlert className="w-4 h-4" /> : <UserCheck className="w-4 h-4" />}
               </div>
               <div className="leading-tight text-left">
-                <div className="text-[10px] uppercase font-bold text-teal-400 flex items-center gap-1">
-                  <span>{adminUser.role === 'super_admin' ? 'Super Admin' : 'Admin'}</span>
+                <div
+                  className={`text-[10px] uppercase font-bold flex items-center gap-1.5 ${
+                    isSuperAdmin ? 'text-amber-400' : 'text-teal-400'
+                  }`}
+                >
+                  <span>{isSuperAdmin ? 'Master Super Admin' : 'Hospital Staff Admin'}</span>
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                 </div>
                 <div className="font-mono text-slate-200 text-xs font-bold">{adminUser.email}</div>
+                {!isSuperAdmin && (
+                  <div className="text-[9px] text-slate-400 mt-0.5">
+                    {userPermissions.length} Active Permissions
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -317,124 +405,217 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       </div>
 
       {/* METRICS CARDS */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-1">
-          <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block">Total Revenue</span>
+          <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block">Total Bookings</span>
           <span className="text-2xl font-bold text-slate-900 font-mono">
-            PKR {stats.totalRevenue.toLocaleString()}
+            {appointments.length}
           </span>
-          <p className="text-[11px] text-teal-700 font-bold">Today: PKR {stats.todayRevenue.toLocaleString()}</p>
+          <p className="text-[11px] text-slate-500 font-medium">All OPD Patients</p>
         </div>
 
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-1">
-          <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block">Pending Payment Review</span>
+          <span className="text-[10px] uppercase font-bold text-blue-600 tracking-wider block">Pay at Hospital</span>
+          <span className="text-2xl font-bold text-blue-700 font-mono">{payAtHospitalCount}</span>
+          <p className="text-[11px] text-blue-600 font-medium">No Online Fee Required</p>
+        </div>
+
+        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-1">
+          <span className="text-[10px] uppercase font-bold text-emerald-600 tracking-wider block">Paid Online</span>
+          <span className="text-2xl font-bold text-emerald-700 font-mono">{paidOnlineCount}</span>
+          <p className="text-[11px] text-emerald-600 font-medium">Verified Gateway / Trx</p>
+        </div>
+
+        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-1">
+          <span className="text-[10px] uppercase font-bold text-teal-600 tracking-wider block">Online Revenue</span>
+          <span className="text-2xl font-bold text-teal-800 font-mono">
+            PKR {totalOnlineRevenue.toLocaleString()}
+          </span>
+          <p className="text-[11px] text-teal-700 font-bold">Total Gateway Inflow</p>
+        </div>
+
+        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-1">
+          <span className="text-[10px] uppercase font-bold text-amber-600 tracking-wider block">Pending Review</span>
           <span className="text-2xl font-bold text-amber-600 font-mono">{stats.pending}</span>
-          <p className="text-[11px] text-amber-700 font-medium">Requires Cashier Approval</p>
-        </div>
-
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-1">
-          <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block">Confirmed Tokens</span>
-          <span className="text-2xl font-bold text-teal-700 font-mono">{stats.verified}</span>
-          <p className="text-[11px] text-teal-700 font-medium">WhatsApp Slips Sent</p>
-        </div>
-
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-1">
-          <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block">Active Camps & Events</span>
-          <span className="text-2xl font-bold text-slate-800 font-mono">{hospitalEvents.length}</span>
-          <p className="text-[11px] text-slate-500">Auto-Pruning Active</p>
+          <p className="text-[11px] text-amber-700 font-medium">Awaiting Cashier Check</p>
         </div>
       </div>
 
-      {/* TAB NAVIGATION */}
+      {/* TAB NAVIGATION (Role-Based Access Controlled) */}
       <div className="flex border-b border-slate-200 gap-2 overflow-x-auto text-xs sm:text-sm font-bold no-scrollbar">
-        <button
-          onClick={() => setActiveTab('payments')}
-          className={`pb-3 px-4 transition border-b-2 whitespace-nowrap cursor-pointer ${
-            activeTab === 'payments'
-              ? 'border-teal-700 text-teal-700 font-bold'
-              : 'border-transparent text-slate-500 hover:text-slate-900'
-          }`}
-        >
-          💳 Payment Verification ({stats.pending})
-        </button>
+        {can('appointments.view') && (
+          <button
+            onClick={() => setActiveTab('payments')}
+            className={`pb-3 px-4 transition border-b-2 whitespace-nowrap cursor-pointer ${
+              activeTab === 'payments'
+                ? 'border-teal-700 text-teal-700 font-bold'
+                : 'border-transparent text-slate-500 hover:text-slate-900'
+            }`}
+          >
+            💳 Appointments & Verification ({stats.pending})
+          </button>
+        )}
 
-        <button
-          onClick={() => setActiveTab('schedule')}
-          className={`pb-3 px-4 transition border-b-2 whitespace-nowrap cursor-pointer ${
-            activeTab === 'schedule'
-              ? 'border-teal-700 text-teal-700 font-bold'
-              : 'border-transparent text-slate-500 hover:text-slate-900'
-          }`}
-        >
-          👨‍⚕️ Doctor Schedules & Leave
-        </button>
+        {can('doctors.manage') && (
+          <button
+            onClick={() => setActiveTab('schedule')}
+            className={`pb-3 px-4 transition border-b-2 whitespace-nowrap cursor-pointer ${
+              activeTab === 'schedule'
+                ? 'border-teal-700 text-teal-700 font-bold'
+                : 'border-transparent text-slate-500 hover:text-slate-900'
+            }`}
+          >
+            👨‍⚕️ Doctors & Leave
+          </button>
+        )}
 
-        <button
-          onClick={() => setActiveTab('events')}
-          className={`pb-3 px-4 transition border-b-2 whitespace-nowrap cursor-pointer ${
-            activeTab === 'events'
-              ? 'border-teal-700 text-teal-700 font-bold'
-              : 'border-transparent text-slate-500 hover:text-slate-900'
-          }`}
-        >
-          📅 Hospital Dates & Medical Camps ({hospitalEvents.length})
-        </button>
+        {(can('services.manage') || isSuperAdmin) && (
+          <button
+            onClick={() => setActiveTab('services')}
+            className={`pb-3 px-4 transition border-b-2 whitespace-nowrap cursor-pointer ${
+              activeTab === 'services'
+                ? 'border-teal-700 text-teal-700 font-bold'
+                : 'border-transparent text-slate-500 hover:text-slate-900'
+            }`}
+          >
+            🩺 Clinical Services
+          </button>
+        )}
 
-        <button
-          onClick={() => setActiveTab('patients')}
-          className={`pb-3 px-4 transition border-b-2 whitespace-nowrap cursor-pointer ${
-            activeTab === 'patients'
-              ? 'border-teal-700 text-teal-700 font-bold'
-              : 'border-transparent text-slate-500 hover:text-slate-900'
-          }`}
-        >
-          📋 Patient OPD Queue ({appointments.length})
-        </button>
+        {(can('content.manage') || isSuperAdmin) && (
+          <button
+            onClick={() => setActiveTab('events')}
+            className={`pb-3 px-4 transition border-b-2 whitespace-nowrap cursor-pointer ${
+              activeTab === 'events'
+                ? 'border-teal-700 text-teal-700 font-bold'
+                : 'border-transparent text-slate-500 hover:text-slate-900'
+            }`}
+          >
+            📅 Camps & Events ({hospitalEvents.length})
+          </button>
+        )}
 
-        <button
-          onClick={() => setActiveTab('announcements')}
-          className={`pb-3 px-4 transition border-b-2 whitespace-nowrap cursor-pointer ${
-            activeTab === 'announcements'
-              ? 'border-teal-700 text-teal-700 font-bold'
-              : 'border-transparent text-slate-500 hover:text-slate-900'
-          }`}
-        >
-          📢 Emergency & Alerts
-        </button>
+        {can('patients.view') && (
+          <button
+            onClick={() => setActiveTab('patients')}
+            className={`pb-3 px-4 transition border-b-2 whitespace-nowrap cursor-pointer ${
+              activeTab === 'patients'
+                ? 'border-teal-700 text-teal-700 font-bold'
+                : 'border-transparent text-slate-500 hover:text-slate-900'
+            }`}
+          >
+            📋 Patient OPD Queue ({appointments.length})
+          </button>
+        )}
 
-        <button
-          onClick={() => setActiveTab('settings')}
-          className={`pb-3 px-4 transition border-b-2 whitespace-nowrap cursor-pointer ${
-            activeTab === 'settings'
-              ? 'border-teal-700 text-teal-700 font-bold'
-              : 'border-transparent text-slate-500 hover:text-slate-900'
-          }`}
-        >
-          ⚙️ Merchant APIs
-        </button>
+        {(can('content.manage') || isSuperAdmin) && (
+          <button
+            onClick={() => setActiveTab('announcements')}
+            className={`pb-3 px-4 transition border-b-2 whitespace-nowrap cursor-pointer ${
+              activeTab === 'announcements'
+                ? 'border-teal-700 text-teal-700 font-bold'
+                : 'border-transparent text-slate-500 hover:text-slate-900'
+            }`}
+          >
+            📢 Emergency & Alerts
+          </button>
+        )}
+
+        {/* Super Admin Exclusive Tabs */}
+        {isSuperAdmin && (
+          <button
+            onClick={() => setActiveTab('admins')}
+            className={`pb-3 px-4 transition border-b-2 whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+              activeTab === 'admins'
+                ? 'border-amber-600 text-amber-700 font-bold'
+                : 'border-transparent text-amber-800/80 hover:text-amber-900'
+            }`}
+          >
+            <ShieldAlert className="w-3.5 h-3.5 text-amber-600" />
+            <span>Admin Accounts & RBAC</span>
+          </button>
+        )}
+
+        {isSuperAdmin && (
+          <button
+            onClick={() => setActiveTab('audit')}
+            className={`pb-3 px-4 transition border-b-2 whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+              activeTab === 'audit'
+                ? 'border-indigo-600 text-indigo-700 font-bold'
+                : 'border-transparent text-indigo-800/80 hover:text-indigo-900'
+            }`}
+          >
+            <FileText className="w-3.5 h-3.5 text-indigo-600" />
+            <span>Audit Trail</span>
+          </button>
+        )}
+
+        {isSuperAdmin && (
+          <button
+            onClick={() => setActiveTab('settings')}
+            className={`pb-3 px-4 transition border-b-2 whitespace-nowrap cursor-pointer ${
+              activeTab === 'settings'
+                ? 'border-teal-700 text-teal-700 font-bold'
+                : 'border-transparent text-slate-500 hover:text-slate-900'
+            }`}
+          >
+            ⚙️ Merchant APIs & Settings
+          </button>
+        )}
       </div>
 
       {/* TAB 1: PAYMENT VERIFICATION QUEUE */}
       {activeTab === 'payments' && (
         <div className="space-y-4">
-          <div className="bg-white p-4 rounded-2xl border border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3">
-            <div className="relative w-full sm:w-80">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search patient, TRX ID, or ID..."
-                className="w-full pl-9 pr-4 py-2 bg-slate-50 border rounded-xl text-xs font-semibold outline-none focus:ring-2 focus:ring-teal-500"
-              />
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 flex flex-col gap-3">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+              <div className="relative w-full sm:w-80">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search patient, phone, TRX ID, or ID..."
+                  className="w-full pl-9 pr-4 py-2 bg-slate-50 border rounded-xl text-xs font-semibold outline-none focus:ring-2 focus:ring-teal-500"
+                />
+              </div>
+
+              {/* Multi-Filters: Doctor & Payment Option */}
+              <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                <select
+                  value={selectedDoctorFilter}
+                  onChange={(e) => setSelectedDoctorFilter(e.target.value)}
+                  className="px-3 py-2 bg-slate-50 border rounded-xl text-xs font-bold text-slate-700 outline-none"
+                >
+                  <option value="all">👨‍⚕️ All Doctors</option>
+                  {doctors.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.nameEn}
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  value={selectedPaymentFilter}
+                  onChange={(e) => setSelectedPaymentFilter(e.target.value)}
+                  className="px-3 py-2 bg-slate-50 border rounded-xl text-xs font-bold text-slate-700 outline-none"
+                >
+                  <option value="all">💳 All Payment Types</option>
+                  <option value="pay_at_hospital">🏥 Pay at Hospital (No Online Fee)</option>
+                  <option value="paid_online">✅ Paid Online (Gateway/Trx)</option>
+                  <option value="pending_payment">⏳ Pending Payment</option>
+                  <option value="refunded">↩️ Refunded</option>
+                </select>
+              </div>
             </div>
 
-            <div className="flex items-center gap-2 w-full sm:w-auto overflow-x-auto">
-              {['all', 'payment_submitted', 'pending_payment', 'confirmed', 'checked_in', 'completed', 'cancelled'].map((st) => (
+            {/* Status pills */}
+            <div className="flex items-center gap-2 overflow-x-auto pt-1 border-t border-slate-100">
+              {['all', 'confirmed', 'payment_submitted', 'pending_payment', 'checked_in', 'completed', 'refunded', 'cancelled'].map((st) => (
                 <button
                   key={st}
                   onClick={() => setFilterStatus(st)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition ${
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer ${
                     filterStatus === st
                       ? 'bg-slate-900 text-white shadow'
                       : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
@@ -443,7 +624,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   {st === 'payment_submitted'
                     ? 'Pending Review'
                     : st === 'all'
-                    ? 'All'
+                    ? 'All Statuses'
                     : st.replace('_', ' ')}
                 </button>
               ))}
@@ -457,8 +638,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <th className="p-4">Appt ID & Date</th>
                   <th className="p-4">Patient & WhatsApp</th>
                   <th className="p-4">Doctor</th>
-                  <th className="p-4">Fee & Method</th>
-                  <th className="p-4">TRX Reference</th>
+                  <th className="p-4">Booking Option & Payment</th>
+                  <th className="p-4">TRX / Gateway</th>
                   <th className="p-4">Screenshot</th>
                   <th className="p-4">Status</th>
                   <th className="p-4 text-right">Actions</th>
@@ -472,94 +653,179 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     </td>
                   </tr>
                 ) : (
-                  filteredAppointments.map((appt) => (
-                    <tr key={appt.id} className="hover:bg-slate-50/80 transition">
-                      <td className="p-4">
-                        <span className="font-mono font-black text-slate-900 block">{appt.id}</span>
-                        <span className="text-[11px] text-slate-500">{appt.date} ({appt.time})</span>
-                      </td>
+                  filteredAppointments.map((appt) => {
+                    const isPayAtHospital =
+                      appt.bookingOption === 'pay_at_hospital' || appt.paymentStatus === 'pay_at_hospital';
+                    const isPaidOnline =
+                      appt.paymentStatus === 'paid_online' ||
+                      (appt.bookingOption === 'pay_online' && appt.status === 'confirmed' && !isPayAtHospital);
+                    const isRefunded = appt.paymentStatus === 'refunded' || appt.status === 'refunded';
 
-                      <td className="p-4">
-                        <span className="font-bold text-slate-900 block">{appt.patientName}</span>
-                        <span className="text-[11px] font-mono text-teal-800">{appt.whatsAppNumber}</span>
-                      </td>
+                    return (
+                      <tr key={appt.id} className="hover:bg-slate-50/80 transition">
+                        <td className="p-4">
+                          <span className="font-mono font-black text-slate-900 block">{appt.id}</span>
+                          <span className="text-[11px] text-slate-500">{appt.date} ({appt.time})</span>
+                          <span className="text-[10px] text-slate-400 block font-sans">
+                            {appt.patientType === 'followup' ? 'Follow-up' : 'New Patient'}
+                          </span>
+                        </td>
 
-                      <td className="p-4">
-                        <span className="font-semibold text-slate-800 block">{appt.doctorNameEn}</span>
-                        <span className="text-[10px] text-slate-500">{appt.departmentEn}</span>
-                      </td>
+                        <td className="p-4">
+                          <span className="font-bold text-slate-900 block">{appt.patientName}</span>
+                          <span className="text-[11px] font-mono text-teal-800">{appt.whatsAppNumber}</span>
+                          {appt.visitReason && (
+                            <p className="text-[10px] text-slate-500 italic truncate max-w-[140px]" title={appt.visitReason}>
+                              "{appt.visitReason}"
+                            </p>
+                          )}
+                        </td>
 
-                      <td className="p-4">
-                        <span className="font-black text-slate-900 font-mono block">PKR {appt.feePKR}</span>
-                        <span className="inline-block px-1.5 py-0.5 bg-amber-100 text-amber-800 text-[10px] font-bold rounded uppercase">
-                          {appt.paymentMethod || 'Hospital Counter'}
-                        </span>
-                      </td>
+                        <td className="p-4">
+                          <span className="font-semibold text-slate-800 block">{appt.doctorNameEn}</span>
+                          <span className="text-[10px] text-slate-500">{appt.departmentEn}</span>
+                        </td>
 
-                      <td className="p-4 font-mono font-bold text-teal-900">
-                        {appt.paymentReference || <span className="text-slate-400 font-normal">Not provided</span>}
-                      </td>
+                        <td className="p-4">
+                          <span className="font-black text-slate-900 font-mono block">PKR {appt.feePKR}</span>
+                          {isPayAtHospital ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 text-blue-800 text-[10px] font-bold rounded-md border border-blue-200 uppercase">
+                              <Building2 className="w-2.5 h-2.5" />
+                              Pay at Hospital
+                            </span>
+                          ) : isPaidOnline ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-bold rounded-md border border-emerald-200 uppercase">
+                              <ShieldCheck className="w-2.5 h-2.5" />
+                              Paid Online
+                            </span>
+                          ) : isRefunded ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-rose-100 text-rose-800 text-[10px] font-bold rounded-md border border-rose-200 uppercase">
+                              Refunded
+                            </span>
+                          ) : (
+                            <span className="inline-block px-1.5 py-0.5 bg-amber-100 text-amber-800 text-[10px] font-bold rounded uppercase">
+                              {appt.paymentMethod || 'Hospital Counter'}
+                            </span>
+                          )}
+                        </td>
 
-                      <td className="p-4">
-                        {appt.paymentScreenshotUrl ? (
-                          <button
-                            onClick={() => setSelectedScreenshotUrl(appt.paymentScreenshotUrl!)}
-                            className="flex items-center gap-1 text-teal-700 hover:text-teal-900 bg-teal-50 px-2 py-1 rounded border border-teal-200 font-bold text-[11px]"
+                        <td className="p-4 font-mono text-xs">
+                          {appt.transactionId || appt.paymentReference ? (
+                            <div>
+                              <span className="font-bold text-teal-900 block">
+                                {appt.transactionId || appt.paymentReference}
+                              </span>
+                              <span className="text-[10px] text-slate-400">
+                                {appt.paymentGateway || appt.paymentMethod || 'Gateway'}
+                              </span>
+                            </div>
+                          ) : isPayAtHospital ? (
+                            <span className="text-slate-500 text-[11px] italic">Cash at OPD</span>
+                          ) : (
+                            <span className="text-slate-400 font-normal">Not provided</span>
+                          )}
+                        </td>
+
+                        <td className="p-4">
+                          {appt.paymentScreenshotUrl ? (
+                            <button
+                              onClick={() => setSelectedScreenshotUrl(appt.paymentScreenshotUrl!)}
+                              className="flex items-center gap-1 text-teal-700 hover:text-teal-900 bg-teal-50 px-2 py-1 rounded border border-teal-200 font-bold text-[11px] cursor-pointer"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              <span>View</span>
+                            </button>
+                          ) : (
+                            <span className="text-slate-400 text-[11px]">—</span>
+                          )}
+                        </td>
+
+                        <td className="p-4">
+                          <span
+                            className={`inline-block px-2.5 py-1 rounded-full text-[10px] font-bold uppercase ${
+                              appt.status === 'confirmed'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : appt.status === 'payment_submitted'
+                                ? 'bg-blue-100 text-blue-800 animate-pulse'
+                                : appt.status === 'checked_in'
+                                ? 'bg-purple-100 text-purple-800'
+                                : appt.status === 'completed'
+                                ? 'bg-slate-200 text-slate-800'
+                                : appt.status === 'refunded'
+                                ? 'bg-rose-100 text-rose-800'
+                                : 'bg-amber-100 text-amber-800'
+                            }`}
                           >
-                            <Eye className="w-3.5 h-3.5" />
-                            <span>View</span>
-                          </button>
-                        ) : (
-                          <span className="text-slate-400 text-[11px]">No file</span>
-                        )}
-                      </td>
+                            {appt.status.replace('_', ' ')}
+                          </span>
+                        </td>
 
-                      <td className="p-4">
-                        <span
-                          className={`inline-block px-2.5 py-1 rounded-full text-[10px] font-bold uppercase ${
-                            appt.status === 'confirmed'
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : appt.status === 'payment_submitted'
-                              ? 'bg-blue-100 text-blue-800 animate-pulse'
-                              : appt.status === 'checked_in'
-                              ? 'bg-purple-100 text-purple-800'
-                              : appt.status === 'completed'
-                              ? 'bg-slate-200 text-slate-800'
-                              : 'bg-amber-100 text-amber-800'
-                          }`}
-                        >
-                          {appt.status.replace('_', ' ')}
-                        </span>
-                      </td>
+                        <td className="p-4 text-right space-x-1 whitespace-nowrap">
+                          {appt.status === 'payment_submitted' && (
+                            <>
+                              <button
+                                onClick={() => handleVerify(appt.id, 'approve')}
+                                className="px-2.5 py-1.5 bg-teal-700 hover:bg-teal-800 text-white rounded-lg text-xs font-bold cursor-pointer"
+                              >
+                                Approve
+                              </button>
+                              <button
+                                onClick={() => handleVerify(appt.id, 'reject')}
+                                className="px-2.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold cursor-pointer"
+                              >
+                                Reject
+                              </button>
+                            </>
+                          )}
 
-                      <td className="p-4 text-right space-x-1 whitespace-nowrap">
-                        {appt.status !== 'confirmed' && appt.status !== 'completed' && (
-                          <button
-                            onClick={() => handleVerify(appt.id, 'approve')}
-                            className="px-3 py-1.5 bg-teal-700 hover:bg-teal-800 text-white rounded-lg text-xs font-bold shadow-xs cursor-pointer"
-                          >
-                            Approve
-                          </button>
-                        )}
-                        {appt.status === 'payment_submitted' && (
-                          <button
-                            onClick={() => handleVerify(appt.id, 'reject')}
-                            className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold cursor-pointer"
-                          >
-                            Reject
-                          </button>
-                        )}
-                        {appt.status === 'confirmed' && (
-                          <button
-                            onClick={() => handleVerify(appt.id, 'checkin')}
-                            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold cursor-pointer"
-                          >
-                            Check In
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))
+                          {appt.status === 'confirmed' && (
+                            <button
+                              onClick={() => handleVerify(appt.id, 'checkin')}
+                              className="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold cursor-pointer"
+                            >
+                              Check In
+                            </button>
+                          )}
+
+                          {appt.status === 'checked_in' && (
+                            <button
+                              onClick={() => handleVerify(appt.id, 'complete')}
+                              className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold cursor-pointer"
+                            >
+                              Complete
+                            </button>
+                          )}
+
+                          {/* REFUND BUTTON for online payments */}
+                          {isPaidOnline && !isRefunded && (
+                            <button
+                              onClick={() => {
+                                setRefundModalAppt(appt);
+                                setRefundReason('Patient requested cancellation within policy window');
+                              }}
+                              className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-xs font-bold cursor-pointer"
+                              title="Process Online Payment Refund"
+                            >
+                              Refund
+                            </button>
+                          )}
+
+                          {/* Switch to Pay at hospital if pending payment */}
+                          {appt.status === 'pending_payment' && (
+                            <button
+                              onClick={async () => {
+                                await updateAppointmentStatus(appt.id, 'confirmed', 'Switched by admin to Pay at Hospital');
+                              }}
+                              className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 border rounded-lg text-xs font-bold cursor-pointer"
+                              title="Switch to Pay at Hospital"
+                            >
+                              To Counter
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -1030,7 +1296,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 className="p-4 rounded-2xl border border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 hover:bg-slate-50 transition"
               >
                 <div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <span className="font-mono font-bold text-sm text-slate-900">{appt.id}</span>
                     <span
                       className={`text-xs px-2 py-0.5 rounded font-bold ${
@@ -1045,13 +1311,34 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     >
                       {appt.status.replace('_', ' ')}
                     </span>
+                    {appt.bookingOption === 'pay_at_hospital' || appt.paymentStatus === 'pay_at_hospital' ? (
+                      <span className="text-[10px] px-2 py-0.5 bg-blue-100 text-blue-800 rounded-md font-bold uppercase border border-blue-200">
+                        Pay at Hospital (Collect PKR {appt.feePKR})
+                      </span>
+                    ) : appt.paymentStatus === 'paid_online' ? (
+                      <span className="text-[10px] px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-md font-bold uppercase border border-emerald-200">
+                        Paid Online (PKR {appt.feePKR})
+                      </span>
+                    ) : (
+                      <span className="text-[10px] px-2 py-0.5 bg-amber-100 text-amber-800 rounded-md font-bold uppercase">
+                        Pending Payment
+                      </span>
+                    )}
+                    <span className="text-[10px] px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded font-semibold">
+                      {appt.patientType === 'followup' ? 'Follow-up' : 'New Patient'}
+                    </span>
                   </div>
                   <h4 className="font-bold text-slate-900 text-sm mt-1">
-                    {appt.patientName} ({appt.age} Yrs, {appt.gender})
+                    {appt.patientName} {appt.age ? `(${appt.age} Yrs, ${appt.gender})` : ''}
                   </h4>
                   <p className="text-xs text-slate-600">
                     Dr. {appt.doctorNameEn} • Slot: {appt.time} ({appt.date}) • {appt.whatsAppNumber}
                   </p>
+                  {appt.visitReason && (
+                    <p className="text-xs text-slate-500 italic mt-0.5">
+                      Reason: "{appt.visitReason}"
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -1184,17 +1471,137 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         </div>
       )}
 
-      {/* TAB 6: MERCHANT GATEWAY API ARCHITECTURE SETTINGS */}
+      {/* TAB 6: SYSTEM & MERCHANT GATEWAY SETTINGS */}
       {activeTab === 'settings' && (
-        <div className="bg-slate-900 text-white p-8 rounded-3xl space-y-6 shadow-xl">
-          <div className="border-b border-slate-800 pb-4">
-            <h3 className="text-xl font-bold text-teal-400">
-              Official Merchant Payment Gateway & WhatsApp API Architecture
-            </h3>
-            <p className="text-xs text-slate-400 mt-1">
-              Configure production merchant credentials for automated JazzCash, Easypaisa, and WhatsApp Business API.
-            </p>
+        <div className="space-y-6">
+          {/* System-wide Booking & Payment Controls */}
+          <div className="bg-white p-6 sm:p-8 rounded-3xl border border-slate-200 shadow-sm space-y-6">
+            <div className="border-b pb-4">
+              <h3 className="text-lg font-extrabold text-slate-900 flex items-center gap-2">
+                <Settings className="w-5 h-5 text-teal-600" />
+                <span>Dual Appointment & Payment System Controls</span>
+              </h3>
+              <p className="text-xs text-slate-500 mt-1">
+                Configure patient booking options, hospital-wide payment toggles, and mobile number OTP verification rules.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs">
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="font-bold text-slate-900 text-sm">Option 1: Pay at Hospital</h4>
+                    <p className="text-slate-500 text-[11px]">Allow patients to book without paying online (settle fee at hospital counter)</p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={systemSettings.payAtHospitalEnabled}
+                    onChange={(e) =>
+                      setSystemSettings({ ...systemSettings, payAtHospitalEnabled: e.target.checked })
+                    }
+                    className="w-5 h-5 rounded text-teal-600 cursor-pointer"
+                  />
+                </div>
+              </div>
+
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="font-bold text-slate-900 text-sm">Option 2: Pay Online Gateway</h4>
+                    <p className="text-slate-500 text-[11px]">Allow online payment via JazzCash, Easypaisa, or Debit/Credit Card</p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={systemSettings.onlinePaymentEnabled}
+                    onChange={(e) =>
+                      setSystemSettings({ ...systemSettings, onlinePaymentEnabled: e.target.checked })
+                    }
+                    className="w-5 h-5 rounded text-teal-600 cursor-pointer"
+                  />
+                </div>
+              </div>
+
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="font-bold text-slate-900 text-sm">Mobile OTP Verification</h4>
+                    <p className="text-slate-500 text-[11px]">Require SMS/WhatsApp OTP code before confirming booking</p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={systemSettings.requireOtpVerification}
+                    onChange={(e) =>
+                      setSystemSettings({ ...systemSettings, requireOtpVerification: e.target.checked })
+                    }
+                    className="w-5 h-5 rounded text-teal-600 cursor-pointer"
+                  />
+                </div>
+              </div>
+
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="font-bold text-slate-900 text-sm">OTP Simulation / Test Mode</h4>
+                    <p className="text-slate-500 text-[11px]">Allows instant testing with default OTP code: <code className="font-bold text-teal-700">1234</code></p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={systemSettings.otpTestMode}
+                    onChange={(e) =>
+                      setSystemSettings({ ...systemSettings, otpTestMode: e.target.checked })
+                    }
+                    className="w-5 h-5 rounded text-teal-600 cursor-pointer"
+                  />
+                </div>
+              </div>
+
+              <div className="md:col-span-2 p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
+                <label className="font-bold text-slate-900 block">Default Consultation Fee (PKR)</label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="number"
+                    value={systemSettings.defaultConsultationFee}
+                    onChange={(e) =>
+                      setSystemSettings({ ...systemSettings, defaultConsultationFee: Number(e.target.value) })
+                    }
+                    className="w-48 p-2.5 bg-white border rounded-xl font-mono text-sm font-bold"
+                  />
+                  <span className="text-slate-500 text-xs">Used as fallback fee if doctor specific fee is not defined</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-3 border-t">
+              <button
+                type="button"
+                disabled={isSavingSettings}
+                onClick={async () => {
+                  setIsSavingSettings(true);
+                  const res = await updateHospitalInfo(systemSettings);
+                  setIsSavingSettings(false);
+                  if (res.success) {
+                    alert('Hospital booking and payment settings updated successfully!');
+                  } else {
+                    alert(res.error || 'Failed to update settings.');
+                  }
+                }}
+                className="px-6 py-2.5 bg-teal-700 hover:bg-teal-800 text-white font-bold rounded-xl text-xs shadow-md transition cursor-pointer"
+              >
+                {isSavingSettings ? 'Saving Settings...' : 'Save Booking Settings'}
+              </button>
+            </div>
           </div>
+
+          {/* Merchant Payment Gateway Configuration */}
+          <div className="bg-slate-900 text-white p-8 rounded-3xl space-y-6 shadow-xl">
+            <div className="border-b border-slate-800 pb-4">
+              <h3 className="text-xl font-bold text-teal-400">
+                Official Merchant Payment Gateway & WhatsApp API Architecture
+              </h3>
+              <p className="text-xs text-slate-400 mt-1">
+                Configure production merchant credentials for automated JazzCash, Easypaisa, and WhatsApp Business API.
+              </p>
+            </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs">
             <div className="bg-slate-800 p-5 rounded-2xl border border-slate-700 space-y-3">
@@ -1256,6 +1663,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
           </div>
         </div>
+      </div>
+      )}
+
+      {/* TAB: CLINICAL SERVICES & SPECIALITIES */}
+      {activeTab === 'services' && (
+        <ClinicalServicesTab lang={lang} token={token} hasPermission={can('services.manage')} />
+      )}
+
+      {/* TAB: ADMIN ACCOUNTS & RBAC MANAGEMENT (Super Admin Only) */}
+      {activeTab === 'admins' && isSuperAdmin && (
+        <AdminManagementTab lang={lang} token={token} />
+      )}
+
+      {/* TAB: AUDIT TRAIL LOGS (Super Admin Only) */}
+      {activeTab === 'audit' && isSuperAdmin && (
+        <AuditLogsTab lang={lang} token={token} />
       )}
 
       {/* EVENT CREATE/EDIT MODAL */}
@@ -1451,6 +1874,89 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 className="px-5 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold"
               >
                 Close Preview
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* REFUND MODAL */}
+      {refundModalAppt && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-md w-full space-y-4 shadow-2xl relative">
+            <button
+              onClick={() => setRefundModalAppt(null)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-900 font-bold text-lg cursor-pointer"
+            >
+              ✕
+            </button>
+
+            <div className="space-y-1">
+              <span className="px-2.5 py-0.5 bg-rose-100 text-rose-800 text-[10px] font-bold rounded-full uppercase tracking-wider">
+                Online Payment Refund
+              </span>
+              <h3 className="text-xl font-extrabold text-slate-900">
+                Process Appointment Refund
+              </h3>
+              <p className="text-xs text-slate-500">
+                Appt: <strong className="font-mono text-slate-800">{refundModalAppt.id}</strong> • Patient: <strong>{refundModalAppt.patientName}</strong>
+              </p>
+            </div>
+
+            <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 text-xs space-y-2">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Amount to Refund:</span>
+                <span className="font-mono font-bold text-rose-900">PKR {refundModalAppt.feePKR}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Payment Gateway:</span>
+                <span className="font-bold text-slate-800">{refundModalAppt.paymentGateway || refundModalAppt.paymentMethod || 'Online'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Transaction ID:</span>
+                <span className="font-mono font-bold text-slate-800">{refundModalAppt.paymentReference || refundModalAppt.transactionId || 'N/A'}</span>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Refund & Cancellation Reason *
+              </label>
+              <textarea
+                rows={3}
+                value={refundReason}
+                onChange={(e) => setRefundReason(e.target.value)}
+                placeholder="Reason for refund (e.g., patient cancelled, doctor unavailable)..."
+                className="w-full p-3 bg-slate-50 border rounded-xl text-xs font-medium outline-none focus:ring-2 focus:ring-rose-500"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setRefundModalAppt(null)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold cursor-pointer"
+              >
+                Dismiss
+              </button>
+              <button
+                type="button"
+                disabled={isRefunding}
+                onClick={async () => {
+                  if (!refundModalAppt) return;
+                  setIsRefunding(true);
+                  const res = await refundAppointment(refundModalAppt.id, refundReason);
+                  setIsRefunding(false);
+                  if (res.success) {
+                    alert(`Refund successfully registered and processed for appointment ${refundModalAppt.id}.`);
+                    setRefundModalAppt(null);
+                  } else {
+                    alert(`Refund failed: ${res.error}`);
+                  }
+                }}
+                className="px-5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+              >
+                {isRefunding ? 'Processing Refund...' : 'Confirm & Issue Refund'}
               </button>
             </div>
           </div>

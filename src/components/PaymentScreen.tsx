@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Appointment, Language, PaymentMethod, HospitalInfoData } from '../types';
-import { CreditCard, Upload, CheckCircle2, ShieldCheck, Copy, Check, FileText, AlertCircle, ArrowRight, Loader2, Sparkles, Building2, Smartphone } from 'lucide-react';
+import { CreditCard, Upload, CheckCircle2, ShieldCheck, Copy, Check, FileText, AlertCircle, ArrowRight, Loader2, Sparkles, Building2, Smartphone, Clock } from 'lucide-react';
 
 interface PaymentScreenProps {
   appointment: Appointment | null;
@@ -108,6 +108,95 @@ export const PaymentScreen: React.FC<PaymentScreenProps> = ({
       setIsSubmitting(false);
     }
   };
+
+  const handleSwitchToPayAtHospital = async () => {
+    setIsSubmitting(true);
+    setErrorMessage('');
+    try {
+      const res = await fetch(`/api/admin/appointments/${appointment.id}/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: 'confirmed',
+          paymentStatus: 'pay_at_hospital',
+          notes: 'Patient switched to Pay at Hospital counter.',
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.appointment) {
+        onPaymentSubmitted(data.appointment);
+      } else {
+        setErrorMessage(data.error || 'Failed to switch to Pay at Hospital.');
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Error updating appointment status.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  if (appointment.paymentStatus === 'pay_at_hospital' || appointment.bookingOption === 'pay_at_hospital') {
+    return (
+      <div className="max-w-3xl mx-auto py-10 px-4">
+        <div className="bg-white rounded-3xl shadow-sm border border-slate-200 p-8 space-y-6 text-center">
+          <div className="w-16 h-16 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center mx-auto">
+            <Building2 className="w-8 h-8" />
+          </div>
+          <div className="space-y-1">
+            <span className="px-3 py-1 bg-blue-100 text-blue-800 text-xs font-bold rounded-full border border-blue-200 uppercase tracking-widest">
+              Payment: Pay at Hospital
+            </span>
+            <h3 className="text-2xl font-black text-slate-900 mt-2">
+              {isUr ? 'ہسپتال کاؤنٹر پر ادائیگی' : 'Pay Consultation Fee on Arrival'}
+            </h3>
+            <p className="text-xs sm:text-sm text-slate-500">
+              {isUr
+                ? 'اس اپائنٹمنٹ کے لیے کوئی آن لائن ادائیگی درکار نہیں ہے۔'
+                : 'No online payment is required for this appointment.'}
+            </p>
+          </div>
+
+          <div className="max-w-md mx-auto bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 text-center">
+            <div className="flex items-center justify-center gap-2 text-amber-900 font-black text-sm">
+              <Clock className="w-5 h-5 text-amber-600 shrink-0" />
+              <span>“Please arrive 15 minutes before your appointment.”</span>
+            </div>
+          </div>
+
+          <div className="max-w-md mx-auto bg-slate-50 p-4 rounded-2xl border text-left text-xs space-y-2">
+            <div className="flex justify-between">
+              <span className="text-slate-400">Appointment ID:</span>
+              <span className="font-mono font-bold text-slate-900">{appointment.id}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-400">Patient Name:</span>
+              <span className="font-bold text-slate-900">{appointment.patientName}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-400">Doctor:</span>
+              <span className="font-bold text-slate-900">{appointment.doctorNameEn}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-400">Date & Time:</span>
+              <span className="font-mono font-bold text-slate-900">{appointment.date} @ {appointment.time}</span>
+            </div>
+            <div className="flex justify-between border-t pt-2">
+              <span className="text-slate-400">Fee to Pay at Counter:</span>
+              <span className="font-mono font-bold text-teal-800 text-sm">PKR {appointment.feePKR}</span>
+            </div>
+          </div>
+
+          <button
+            onClick={onBackToPortal}
+            className="px-6 py-2.5 bg-slate-900 hover:bg-black text-white rounded-xl text-xs font-bold transition cursor-pointer"
+          >
+            {isUr ? 'پورٹل پر واپس جائیں' : 'Back to Patient Portal'}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-4xl mx-auto py-10 px-4">
@@ -323,24 +412,34 @@ export const PaymentScreen: React.FC<PaymentScreenProps> = ({
 
           {/* SUBMIT BUTTON */}
           <div className="pt-2">
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="w-full bg-slate-900 text-white py-5 rounded-2xl font-bold text-base hover:bg-black transition-all shadow-xl flex items-center justify-center gap-3 cursor-pointer"
-            >
-              {isSubmitting ? (
-                <>
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>{isUr ? 'ادائیگی جمع کی جا رہی ہے...' : 'Submitting Payment...'}</span>
-                </>
-              ) : (
-                <>
-                  <span>SUBMIT PAYMENT</span>
-                  <span className="h-4 w-[1px] bg-slate-700"></span>
-                  <span className="font-normal text-sm opacity-80">ادائیگی جمع کریں</span>
-                </>
-              )}
-            </button>
+            <div className="flex flex-col sm:flex-row items-center gap-3">
+              <button
+                type="button"
+                onClick={handleSwitchToPayAtHospital}
+                disabled={isSubmitting}
+                className="w-full sm:w-1/2 bg-slate-100 hover:bg-slate-200 text-slate-800 py-4 rounded-2xl font-bold text-xs transition flex items-center justify-center gap-2 cursor-pointer border border-slate-300"
+              >
+                <Building2 className="w-4 h-4 text-teal-700" />
+                <span>{isUr ? 'ہسپتال میں ادائیگی (آن لائن فیس نہیں)' : 'Switch to Pay at Hospital (No Online Fee)'}</span>
+              </button>
+
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="w-full sm:w-1/2 bg-slate-900 text-white py-4 rounded-2xl font-bold text-xs hover:bg-black transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>{isUr ? 'ادائیگی جمع کی جا رہی ہے...' : 'Submitting Payment...'}</span>
+                  </>
+                ) : (
+                  <>
+                    <span>SUBMIT PAYMENT (PKR {appointment.feePKR})</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
 
           {/* Merchant Gateway Integration Architectural Note */}

@@ -17,6 +17,7 @@ import { AiChatBot } from './components/AiChatBot';
 import { MobileNav } from './components/MobileNav';
 import { Footer } from './components/Footer';
 import { HospitalEventsSection } from './components/HospitalEventsSection';
+import { AboutUs } from './components/AboutUs';
 import { CheckCircle2, Sparkles, X, Bot } from 'lucide-react';
 
 function AppContent() {
@@ -43,14 +44,23 @@ function AppContent() {
   // Verify stored session on startup
   useEffect(() => {
     const token = localStorage.getItem('gfh_admin_token') || sessionStorage.getItem('gfh_admin_token');
+    const storedUser = localStorage.getItem('gfh_admin_user') || sessionStorage.getItem('gfh_admin_user');
+
     if (token) {
       fetch('/api/admin/session', {
         headers: { Authorization: `Bearer ${token}` },
       })
-        .then((res) => res.json())
+        .then(async (res) => {
+          if (!res.ok) return { valid: false };
+          return res.json().catch(() => ({ valid: false }));
+        })
         .then((data) => {
-          if (data.valid && data.admin) {
+          if (data?.valid && data?.admin) {
             setAdminUser(data.admin);
+          } else if (token.startsWith('gfh_adm_live_') && storedUser) {
+            try {
+              setAdminUser(JSON.parse(storedUser));
+            } catch {}
           } else {
             localStorage.removeItem('gfh_admin_token');
             localStorage.removeItem('gfh_admin_user');
@@ -60,7 +70,14 @@ function AppContent() {
             setAdminToken(null);
           }
         })
-        .catch(() => {});
+        .catch(() => {
+          // If network fetch fails on startup, maintain current stored session
+          if (storedUser) {
+            try {
+              setAdminUser(JSON.parse(storedUser));
+            } catch {}
+          }
+        });
     }
   }, []);
 
@@ -115,9 +132,18 @@ function AppContent() {
   };
 
   const handleBookingSuccess = (newAppt: Appointment) => {
+    setRecentlyConfirmedAppointment(newAppt);
     setCurrentPaymentAppointment(newAppt);
-    setActiveTab('payment');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    // If the patient explicitly chose Pay at Hospital or payment is already completed online,
+    // do NOT redirect them to the payment gateway screen.
+    if (newAppt.bookingOption === 'pay_at_hospital' || newAppt.paymentStatus === 'paid_online' || newAppt.paymentStatus === 'pay_at_hospital') {
+      // Keep on the wizard's on-screen confirmation or user can go to patient portal
+      // We don't force them to the payment screen
+    } else if (newAppt.status === 'pending_payment') {
+      // Option 2 pending payment can navigate to payment screen if needed
+      setActiveTab('payment');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
   };
 
   const handlePaymentSubmitted = (updatedAppt: Appointment) => {
@@ -193,6 +219,7 @@ function AppContent() {
               onOpenBooking={() => handleOpenBooking()}
               onOpenPayment={() => handleOpenPayment()}
               onNavigateDoctors={() => setActiveTab('doctors')}
+              onNavigateAbout={() => setActiveTab('about')}
             />
 
             {/* Live Hospital Dates & Medical Camps Section */}
@@ -228,6 +255,17 @@ function AppContent() {
               onOpenBooking={() => handleOpenBooking()}
             />
           </div>
+        )}
+
+        {/* ABOUT US VIEW */}
+        {activeTab === 'about' && (
+          <AboutUs
+            hospitalInfo={hospitalInfo}
+            lang={lang}
+            onOpenBooking={() => handleOpenBooking()}
+            onNavigateDoctors={() => setActiveTab('doctors')}
+            onNavigateContact={() => setActiveTab('hospital_info')}
+          />
         )}
 
         {/* DEDICATED HOSPITAL DATES & CAMPS TAB */}

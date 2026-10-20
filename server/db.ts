@@ -1,13 +1,19 @@
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import {
   Doctor,
   Appointment,
+  AppointmentStatus,
   HospitalEvent,
   HospitalInfoData,
   HospitalDepartment,
   WhatsAppLog,
   LiveSyncPayload,
+  AdminAccount,
+  AuditLogEntry,
+  HospitalClinicalService,
+  AdminPermission,
 } from '../src/types';
 import {
   INITIAL_DOCTORS,
@@ -17,6 +23,27 @@ import {
   INITIAL_DEPARTMENTS,
 } from '../src/data/mockData';
 
+export const ALL_PERMISSIONS: AdminPermission[] = [
+  'appointments.view',
+  'appointments.create',
+  'appointments.edit',
+  'appointments.cancel',
+  'appointments.delete',
+  'patients.view',
+  'doctors.manage',
+  'departments.manage',
+  'services.manage',
+  'content.manage',
+  'reports.view',
+  'admin.manage',
+  'system.settings',
+  'audit.view',
+];
+
+export interface StoredAdminAccount extends AdminAccount {
+  passwordHash: string;
+}
+
 export interface HospitalDatabaseSchema {
   doctors: Doctor[];
   appointments: Appointment[];
@@ -24,8 +51,211 @@ export interface HospitalDatabaseSchema {
   hospitalInfo: HospitalInfoData;
   departments: HospitalDepartment[];
   whatsappLogs: WhatsAppLog[];
+  admins: StoredAdminAccount[];
+  auditLogs: AuditLogEntry[];
+  services: HospitalClinicalService[];
+  systemSettings: {
+    hospitalRegistrationNo: string;
+    pmdcAuthorityNotice: string;
+    emergencyHotline: string;
+    defaultSlotDurationMinutes: number;
+    auditRetentionDays: number;
+    requireTwoFactorForSuperAdmin: boolean;
+    onlineBookingGracePeriodMinutes: number;
+    maxAppointmentsPerPatientPerDay: number;
+    lastSecurityAuditDate: string;
+  };
   lastUpdated: string;
 }
+
+export function hashPassword(password: string): string {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return `${salt}:${hash}`;
+}
+
+export function verifyPassword(password: string, storedHash: string): boolean {
+  if (!storedHash) return false;
+  if (!storedHash.includes(':')) {
+    return password === storedHash;
+  }
+  const [salt, hash] = storedHash.split(':');
+  const checkHash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(checkHash, 'hex'));
+}
+
+export const INITIAL_SERVICES: HospitalClinicalService[] = [
+  {
+    id: 'srv-mat-1',
+    departmentId: 'dept-maternity',
+    nameEn: 'Antenatal & High-Risk Pregnancy Monitoring',
+    nameUr: 'حمل کی دیکھ بھال اور پیچیدہ کیسز کی نگرانی',
+    category: 'maternity',
+    descriptionEn: 'Comprehensive prenatal screening, regular ultrasound assessments, maternal blood pressure & gestational diabetes monitoring.',
+    descriptionUr: 'حمل کے دوران مکمل طبی معائنہ، الٹراساؤنڈ اور زچہ و بچہ کی مکمل نگرانی۔',
+    isAvailable24x7: true,
+    standardFeePKR: 1500,
+    featured: true,
+  },
+  {
+    id: 'srv-mat-2',
+    departmentId: 'dept-maternity',
+    nameEn: 'Maternity Labor & Normal/Operative Delivery Suite',
+    nameUr: 'لیبر روم اور زچگی کے جدید و محفوظ انتظامات',
+    category: 'maternity',
+    descriptionEn: 'State-of-the-art labor suites, fetal heart monitoring, normal delivery, elective and emergency C-section surgical care.',
+    descriptionUr: 'جدید لیبر سوئیٹس، فیٹل مانیٹرنگ، نارمل ڈلیوری اور ہنگامی سیزیرین سرجری۔',
+    isAvailable24x7: true,
+    standardFeePKR: 2000,
+    featured: true,
+  },
+  {
+    id: 'srv-ped-1',
+    departmentId: 'dept-pediatrics',
+    nameEn: 'Neonatal Nursery & Incubator Care',
+    nameUr: 'نوزائیدہ بچوں کے انکیوبیٹر اور نرسری کی نگہداشت',
+    category: 'pediatric',
+    descriptionEn: 'Specialized neonatal intensive warming, phototherapy for neonatal jaundice, premature infant medical support.',
+    descriptionUr: 'قبل از وقت پیدا ہونے والے بچوں کے لیے انکیوبیٹر، فوٹو تھراپی اور ماہرانہ نگہداشت۔',
+    isAvailable24x7: true,
+    standardFeePKR: 1500,
+    featured: true,
+  },
+  {
+    id: 'srv-ped-2',
+    departmentId: 'dept-pediatrics',
+    nameEn: 'General Pediatric Consultation & EPI Vaccination',
+    nameUr: 'بچوں کا او پی ڈی معائنہ اور حفاظتی ٹیکہ جات',
+    category: 'pediatric',
+    descriptionEn: 'Comprehensive growth and developmental screening, routine immunization against preventable childhood illnesses, pediatric acute infections.',
+    descriptionUr: 'بچوں کے تمام عمومی امراض، نشوونما کا جائزہ اور حفاظتی ٹیکے لگانے کی مکمل سہولت۔',
+    isAvailable24x7: false,
+    standardFeePKR: 1500,
+    featured: true,
+  },
+  {
+    id: 'srv-med-1',
+    departmentId: 'dept-general-medicine',
+    nameEn: 'Family Physician Primary Care & Chronic Disease Management',
+    nameUr: 'فیملی فزیشن اور پرانے امراض کا طویل المدتی علاج',
+    category: 'family_medicine',
+    descriptionEn: 'Expert medical diagnosis and continuous management for Diabetes Type 1 & 2, Hypertension, Thyroid disorders, seasonal infections.',
+    descriptionUr: 'ذیابیطس، ہائی بلڈ پریشر، تھائرائیڈ اور موسمی بیماریوں کا مستند و معیاری علاج۔',
+    isAvailable24x7: true,
+    standardFeePKR: 1500,
+    featured: true,
+  },
+  {
+    id: 'srv-resp-1',
+    departmentId: 'dept-respiratory',
+    nameEn: 'Pulmonary Care, Nebulization & Asthma Therapy',
+    nameUr: 'سانس و پھیپھڑوں کے امراض، دمہ اور فوری نیبولائزیشن',
+    category: 'respiratory',
+    descriptionEn: 'Dedicated respiratory nebulization station, peak flow measurement, acute asthma crisis stabilization, COPD long-term maintenance.',
+    descriptionUr: 'دمہ، الرجی، سینے کے انفیکشن اور کھانسی کے لیے فوری نیبولائزر کی 24 گھنٹے سہولت۔',
+    isAvailable24x7: true,
+    standardFeePKR: 1200,
+    featured: true,
+  },
+  {
+    id: 'srv-card-1',
+    departmentId: 'dept-cardiology',
+    nameEn: 'Cardiovascular Risk Screening & 12-Lead ECG',
+    nameUr: 'دل کے امراض کی ابتدائی تشخیص اور 12-لیڈ ای سی جی',
+    category: 'cardiology',
+    descriptionEn: 'High-precision resting 12-lead Electrocardiogram (ECG), arrhythmia detection, emergency cardiac referral triage, angina evaluation.',
+    descriptionUr: 'جدید ڈیجیٹل ای سی جی، دل کی دھڑکن اور بلڈ پریشر کا فوری اور مستند تجزیہ۔',
+    isAvailable24x7: true,
+    standardFeePKR: 1000,
+    featured: true,
+  },
+  {
+    id: 'srv-lab-1',
+    departmentId: 'dept-laboratory',
+    nameEn: '24/7 Clinical Diagnostic Pathology Lab',
+    nameUr: 'چوبیس گھنٹے کلینیکل لیبارٹری اور تشخیصی ٹیسٹ',
+    category: 'laboratory',
+    descriptionEn: 'Rapid automated blood analysis (CBC), blood sugar, lipid profile, liver & renal function tests (LFT/RFT), urine toxicology & pregnancy testing.',
+    descriptionUr: 'خون اور پیشاب کے فوری لیب ٹیسٹ، شوگر اور جگر و گردوں کے ٹیسٹ کی فوری رپورٹنگ۔',
+    isAvailable24x7: true,
+    standardFeePKR: 500,
+    featured: true,
+  },
+  {
+    id: 'srv-emg-1',
+    departmentId: 'dept-emergency',
+    nameEn: '24/7 Acute Emergency & Minor Surgical Unit',
+    nameUr: 'چوبیس گھنٹے ایمرجنسی وارڈ اور ابتدائی طبی امداد',
+    category: 'emergency',
+    descriptionEn: 'Trauma wound debridement, sterile stitching, intravenous fluid resuscitation, burn dressing, emergency acute medical stabilization.',
+    descriptionUr: 'کسی بھی حادثے یا ہنگامی صورتحال میں فوری فرسٹ ایڈ، ڈریسنگ اور جان بچانے والی ادویات۔',
+    isAvailable24x7: true,
+    standardFeePKR: 1000,
+    featured: true,
+  }
+];
+
+export const INITIAL_ADMINS: StoredAdminAccount[] = [
+  {
+    id: 'sa-master',
+    name: 'Dr. Nadir Hussain Dullu (Super Admin)',
+    email: 'nh979681@gmail.com',
+    mobile: '+92 340 4777745',
+    role: 'super_admin',
+    status: 'active',
+    permissions: [...ALL_PERMISSIONS],
+    passwordHash: hashPassword('fazal381381'),
+    createdAt: '2026-01-01T00:00:00.000Z',
+    lastLogin: '2026-09-16T08:00:00.000Z',
+    createdBy: 'System Root',
+  },
+  {
+    id: 'adm-staff-1',
+    name: 'Hospital Reception & OPD Admin Desk',
+    email: 'admin@gulzarhospital.com',
+    mobile: '+92 300 1234567',
+    role: 'admin',
+    status: 'active',
+    permissions: [
+      'appointments.view',
+      'appointments.create',
+      'appointments.edit',
+      'appointments.cancel',
+      'patients.view',
+      'reports.view',
+    ],
+    passwordHash: hashPassword('hospitaladmin123'),
+    createdAt: '2026-02-01T00:00:00.000Z',
+    lastLogin: '2026-09-15T14:30:00.000Z',
+    createdBy: 'Dr. Nadir Hussain Dullu (Super Admin)',
+  },
+];
+
+export const INITIAL_AUDIT_LOGS: AuditLogEntry[] = [
+  {
+    id: 'aud-seed-1',
+    userId: 'sa-master',
+    userName: 'Dr. Nadir Hussain Dullu',
+    userRole: 'super_admin',
+    action: 'System Initialized & Security Policies Applied',
+    timestamp: '2026-09-10T10:00:00.000Z',
+    affectedRecord: 'SYSTEM_BOOT',
+    newValue: 'Role-Based Access Control activated with zero-trust isolation',
+    ipAddress: '127.0.0.1',
+  },
+  {
+    id: 'aud-seed-2',
+    userId: 'sa-master',
+    userName: 'Dr. Nadir Hussain Dullu',
+    userRole: 'super_admin',
+    action: 'Created Staff Administrator Account',
+    timestamp: '2026-09-12T11:20:00.000Z',
+    affectedRecord: 'adm-staff-1 (admin@gulzarhospital.com)',
+    newValue: 'Granted appointment and patient view permissions',
+    ipAddress: '127.0.0.1',
+  },
+];
+
 
 function getDbFilePath(): string {
   const preferredPath = path.join(process.cwd(), 'data', 'hospital_db.json');
@@ -79,6 +309,20 @@ let db: HospitalDatabaseSchema = {
       timestamp: new Date().toISOString(),
     },
   ],
+  admins: [...INITIAL_ADMINS],
+  auditLogs: [...INITIAL_AUDIT_LOGS],
+  services: [...INITIAL_SERVICES],
+  systemSettings: {
+    hospitalRegistrationNo: 'GFH-PB-2026-889',
+    pmdcAuthorityNotice: 'All doctors and specialists are PMDC certified and authorized',
+    emergencyHotline: '+92 340 4777745',
+    defaultSlotDurationMinutes: 15,
+    auditRetentionDays: 365,
+    requireTwoFactorForSuperAdmin: false,
+    onlineBookingGracePeriodMinutes: 30,
+    maxAppointmentsPerPatientPerDay: 3,
+    lastSecurityAuditDate: '2026-09-16T08:00:00.000Z',
+  },
   lastUpdated: new Date().toISOString(),
 };
 
@@ -97,8 +341,25 @@ export function initDatabase() {
           hospitalInfo: parsed.hospitalInfo || HOSPITAL_INFO,
           departments: parsed.departments || INITIAL_DEPARTMENTS,
           whatsappLogs: parsed.whatsappLogs || [],
+          admins: Array.isArray(parsed.admins) && parsed.admins.length > 0 ? parsed.admins : [...INITIAL_ADMINS],
+          auditLogs: Array.isArray(parsed.auditLogs) ? parsed.auditLogs : [...INITIAL_AUDIT_LOGS],
+          services: Array.isArray(parsed.services) && parsed.services.length > 0 ? parsed.services : [...INITIAL_SERVICES],
+          systemSettings: parsed.systemSettings || db.systemSettings,
           lastUpdated: parsed.lastUpdated || new Date().toISOString(),
         };
+
+        // Enforce Master Super Admin presence and inviolability
+        const hasMasterSuperAdmin = db.admins.some((a) => a.email.toLowerCase() === 'nh979681@gmail.com');
+        if (!hasMasterSuperAdmin) {
+          db.admins.unshift(INITIAL_ADMINS[0]);
+        } else {
+          // Guarantee super_admin role and active status
+          const master = db.admins.find((a) => a.email.toLowerCase() === 'nh979681@gmail.com')!;
+          master.role = 'super_admin';
+          master.status = 'active';
+          master.permissions = [...ALL_PERMISSIONS];
+        }
+
         console.log(`[DB] Successfully loaded hospital database from ${DB_FILE_PATH}`);
       }
     } catch (err) {
@@ -224,9 +485,44 @@ export function updateAppointmentPayment(
   return appt;
 }
 
+export function updateAppointmentStatus(
+  id: string,
+  status: AppointmentStatus,
+  extra?: Partial<Appointment>
+): Appointment | null {
+  const appt = db.appointments.find((a) => a.id === id);
+  if (!appt) return null;
+
+  appt.status = status;
+  if (extra) {
+    Object.assign(appt, extra);
+  }
+  appt.updatedAt = new Date().toLocaleString();
+  saveDatabase();
+  return appt;
+}
+
+export function refundAppointment(
+  id: string,
+  refundReason: string,
+  refundAmount?: number
+): Appointment | null {
+  const appt = db.appointments.find((a) => a.id === id);
+  if (!appt) return null;
+
+  appt.status = 'refunded';
+  appt.paymentStatus = 'refunded';
+  appt.refundReason = refundReason;
+  appt.refundAmount = refundAmount || appt.feePKR;
+  appt.refundedAt = new Date().toLocaleString();
+  appt.updatedAt = new Date().toLocaleString();
+  saveDatabase();
+  return appt;
+}
+
 export function verifyAppointment(
   id: string,
-  action: 'approve' | 'reject' | 'checkin' | 'complete' | 'cancel',
+  action: 'approve' | 'reject' | 'checkin' | 'complete' | 'cancel' | 'refund',
   notes?: string
 ): Appointment | null {
   const appt = db.appointments.find((a) => a.id === id);
@@ -234,6 +530,9 @@ export function verifyAppointment(
 
   if (action === 'approve') {
     appt.status = 'confirmed';
+    if (!appt.paymentStatus || appt.paymentStatus === 'pending') {
+      appt.paymentStatus = appt.bookingOption === 'pay_at_hospital' ? 'pay_at_hospital' : 'paid_online';
+    }
     if (notes) appt.notes = notes;
   } else if (action === 'reject') {
     appt.status = 'pending_payment';
@@ -245,6 +544,12 @@ export function verifyAppointment(
   } else if (action === 'cancel') {
     appt.status = 'cancelled';
     if (notes) appt.notes = notes;
+  } else if (action === 'refund') {
+    appt.status = 'refunded';
+    appt.paymentStatus = 'refunded';
+    appt.refundReason = notes || 'Refund issued by administrator';
+    appt.refundAmount = appt.feePKR;
+    appt.refundedAt = new Date().toLocaleString();
   }
 
   appt.updatedAt = new Date().toLocaleString();
@@ -404,6 +709,13 @@ export function getLiveHospitalSnapshotText(): string {
   prompt += `- Active Emergency Notice: ${info.emergencyNoticeEn || 'All emergency facilities 24/7 open.'}\n`;
   prompt += `- Active Announcement: ${info.activeAnnouncementEn || 'None'}\n\n`;
 
+  prompt += `ABOUT US, VISION & MISSION:\n`;
+  prompt += `- About Us: Gulzar Family Hospital & Children Center is a modern, patient-centered healthcare facility dedicated to comprehensive, compassionate, accessible care for individuals and families at every stage of life. Located on Fatehpur Road, in front of ZTBL Bank, Chowk Azam.\n`;
+  prompt += `- Mission: To provide safe, reliable, evidence-based healthcare close to home while treating every patient with dignity, respect, and compassion.\n`;
+  prompt += `- Vision: To become a trusted healthcare center for the people of Chowk Azam, Layyah and surrounding areas, providing modern medical services, qualified healthcare professionals, advanced diagnostics, and family-centered care.\n`;
+  prompt += `- Core Values: Patient Safety, Compassion, Integrity, Professionalism, Accessibility, Respect, Continuous Improvement.\n`;
+  prompt += `- Tagline: Your Family's Health in Safe Hands\n\n`;
+
   prompt += `PAYMENT METHODS:\n`;
   prompt += `- JazzCash Account: ${info.jazzCash} (Title: Gulzar Family Hospital)\n`;
   prompt += `- Easypaisa Account: ${info.easyPaisa} (Title: Gulzar Family Hospital)\n`;
@@ -447,3 +759,408 @@ export function getLiveHospitalSnapshotText(): string {
   prompt += `=== END OF LIVE DATABASE SNAPSHOT ===\n`;
   return prompt;
 }
+
+// ==========================================
+// ROLE-BASED ACCESS CONTROL & AUDIT LOGS
+// ==========================================
+
+export function getAdmins(): AdminAccount[] {
+  return db.admins.map(({ passwordHash, ...safeAdmin }) => safeAdmin);
+}
+
+export function getAdminById(id: string): StoredAdminAccount | null {
+  return db.admins.find((a) => a.id === id) || null;
+}
+
+export function getAdminByEmailOrMobile(identifier: string): StoredAdminAccount | null {
+  if (!identifier) return null;
+  const clean = identifier.trim().toLowerCase();
+  const cleanMobile = identifier.trim().replace(/[\s\-]/g, '');
+
+  return (
+    db.admins.find((a) => {
+      const emailMatch = a.email.toLowerCase() === clean;
+      const mobileMatch = a.mobile.replace(/[\s\-]/g, '').includes(cleanMobile) || cleanMobile.includes(a.mobile.replace(/[\s\-]/g, ''));
+      return emailMatch || mobileMatch;
+    }) || null
+  );
+}
+
+export function createAdminAccount(
+  data: {
+    name: string;
+    email: string;
+    mobile: string;
+    password: string;
+    role?: 'super_admin' | 'admin';
+    permissions?: AdminPermission[];
+  },
+  actor: { id: string; name: string; role: string; ipAddress?: string }
+): { success: boolean; admin?: AdminAccount; error?: string } {
+  if (actor.role !== 'super_admin') {
+    return { success: false, error: 'Access Denied — Super Admin authorization required.' };
+  }
+
+  const cleanEmail = data.email.trim().toLowerCase();
+  const existing = db.admins.find((a) => a.email.toLowerCase() === cleanEmail);
+  if (existing) {
+    return { success: false, error: 'An administrator with this email address already exists.' };
+  }
+
+  const newId = `adm-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
+  const assignedRole = data.role === 'super_admin' ? 'super_admin' : 'admin';
+  const assignedPermissions = assignedRole === 'super_admin' ? [...ALL_PERMISSIONS] : (data.permissions || [
+    'appointments.view',
+    'appointments.create',
+    'appointments.edit',
+    'appointments.cancel',
+    'patients.view',
+  ]);
+
+  const newAdmin: StoredAdminAccount = {
+    id: newId,
+    name: data.name.trim(),
+    email: cleanEmail,
+    mobile: data.mobile.trim(),
+    role: assignedRole,
+    status: 'active',
+    permissions: assignedPermissions,
+    passwordHash: hashPassword(data.password),
+    createdAt: new Date().toISOString(),
+    createdBy: actor.name,
+  };
+
+  db.admins.push(newAdmin);
+  saveDatabase();
+
+  recordAuditLog({
+    userId: actor.id,
+    userName: actor.name,
+    userRole: actor.role as any,
+    action: `Added Administrator ${newAdmin.name} (${newAdmin.email})`,
+    affectedRecord: newAdmin.id,
+    newValue: JSON.stringify({ role: newAdmin.role, permissions: newAdmin.permissions }),
+    ipAddress: actor.ipAddress,
+  });
+
+  const { passwordHash, ...safe } = newAdmin;
+  return { success: true, admin: safe };
+}
+
+export function updateAdminAccount(
+  id: string,
+  updates: {
+    name?: string;
+    mobile?: string;
+    role?: 'super_admin' | 'admin';
+    permissions?: AdminPermission[];
+    status?: 'active' | 'disabled';
+  },
+  actor: { id: string; name: string; role: string; ipAddress?: string }
+): { success: boolean; admin?: AdminAccount; error?: string } {
+  if (actor.role !== 'super_admin') {
+    return { success: false, error: 'Access Denied — Super Admin authorization required.' };
+  }
+
+  const adminIndex = db.admins.findIndex((a) => a.id === id);
+  if (adminIndex === -1) {
+    return { success: false, error: 'Administrator account not found.' };
+  }
+
+  const current = db.admins[adminIndex];
+
+  // Inviolability of Master Super Admin
+  if (current.id === 'sa-master' || current.email.toLowerCase() === 'nh979681@gmail.com') {
+    if (updates.status === 'disabled') {
+      return { success: false, error: 'Super Admin account cannot be disabled, restricted, or removed.' };
+    }
+    if (updates.role && updates.role !== 'super_admin') {
+      return { success: false, error: 'Super Admin role cannot be modified or downgraded.' };
+    }
+  }
+
+  const previousValue = JSON.stringify({
+    name: current.name,
+    role: current.role,
+    status: current.status,
+    permissions: current.permissions,
+  });
+
+  db.admins[adminIndex] = {
+    ...current,
+    name: updates.name !== undefined ? updates.name.trim() : current.name,
+    mobile: updates.mobile !== undefined ? updates.mobile.trim() : current.mobile,
+    role: updates.role !== undefined ? updates.role : current.role,
+    status: updates.status !== undefined ? updates.status : current.status,
+    permissions: updates.permissions !== undefined ? updates.permissions : current.permissions,
+  };
+
+  saveDatabase();
+
+  const updated = db.admins[adminIndex];
+  const newValue = JSON.stringify({
+    name: updated.name,
+    role: updated.role,
+    status: updated.status,
+    permissions: updated.permissions,
+  });
+
+  recordAuditLog({
+    userId: actor.id,
+    userName: actor.name,
+    userRole: actor.role as any,
+    action: `Updated Administrator Account ${updated.name}`,
+    affectedRecord: updated.id,
+    previousValue,
+    newValue,
+    ipAddress: actor.ipAddress,
+  });
+
+  const { passwordHash, ...safe } = updated;
+  return { success: true, admin: safe };
+}
+
+export function toggleAdminStatus(
+  id: string,
+  status: 'active' | 'disabled',
+  actor: { id: string; name: string; role: string; ipAddress?: string }
+): { success: boolean; admin?: AdminAccount; error?: string } {
+  if (actor.role !== 'super_admin') {
+    return { success: false, error: 'Access Denied — Super Admin authorization required.' };
+  }
+
+  const admin = db.admins.find((a) => a.id === id);
+  if (!admin) {
+    return { success: false, error: 'Administrator account not found.' };
+  }
+
+  if (admin.id === 'sa-master' || admin.email.toLowerCase() === 'nh979681@gmail.com') {
+    return { success: false, error: 'Super Admin account cannot be disabled.' };
+  }
+
+  const prevStatus = admin.status;
+  admin.status = status;
+  saveDatabase();
+
+  recordAuditLog({
+    userId: actor.id,
+    userName: actor.name,
+    userRole: actor.role as any,
+    action: `${status === 'active' ? 'Enabled' : 'Disabled'} Administrator Account ${admin.name}`,
+    affectedRecord: admin.id,
+    previousValue: prevStatus,
+    newValue: status,
+    ipAddress: actor.ipAddress,
+  });
+
+  const { passwordHash, ...safe } = admin;
+  return { success: true, admin: safe };
+}
+
+export function deleteAdminAccount(
+  id: string,
+  actor: { id: string; name: string; role: string; ipAddress?: string }
+): { success: boolean; error?: string } {
+  if (actor.role !== 'super_admin') {
+    return { success: false, error: 'Access Denied — Super Admin authorization required.' };
+  }
+
+  const adminIndex = db.admins.findIndex((a) => a.id === id);
+  if (adminIndex === -1) {
+    return { success: false, error: 'Administrator account not found.' };
+  }
+
+  const target = db.admins[adminIndex];
+  if (target.id === 'sa-master' || target.email.toLowerCase() === 'nh979681@gmail.com') {
+    return { success: false, error: 'Super Admin account cannot be deleted or removed.' };
+  }
+
+  db.admins.splice(adminIndex, 1);
+  saveDatabase();
+
+  recordAuditLog({
+    userId: actor.id,
+    userName: actor.name,
+    userRole: actor.role as any,
+    action: `Permanently Removed Administrator Account ${target.name} (${target.email})`,
+    affectedRecord: target.id,
+    previousValue: JSON.stringify({ name: target.name, email: target.email, role: target.role }),
+    newValue: 'DELETED',
+    ipAddress: actor.ipAddress,
+  });
+
+  return { success: true };
+}
+
+export function resetAdminPassword(
+  id: string,
+  newPass: string,
+  actor: { id: string; name: string; role: string; ipAddress?: string }
+): { success: boolean; error?: string } {
+  if (actor.role !== 'super_admin' && actor.id !== id) {
+    return { success: false, error: 'Access Denied — Super Admin authorization required.' };
+  }
+
+  const admin = db.admins.find((a) => a.id === id);
+  if (!admin) {
+    return { success: false, error: 'Administrator account not found.' };
+  }
+
+  admin.passwordHash = hashPassword(newPass);
+  saveDatabase();
+
+  recordAuditLog({
+    userId: actor.id,
+    userName: actor.name,
+    userRole: actor.role as any,
+    action: `Reset Password for Administrator ${admin.name}`,
+    affectedRecord: admin.id,
+    newValue: 'PASSWORD_CHANGED',
+    ipAddress: actor.ipAddress,
+  });
+
+  return { success: true };
+}
+
+export function recordAuditLog(log: Omit<AuditLogEntry, 'id' | 'timestamp'> & { timestamp?: string }): AuditLogEntry {
+  const newEntry: AuditLogEntry = {
+    id: `aud-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`,
+    timestamp: log.timestamp || new Date().toISOString(),
+    userId: log.userId,
+    userName: log.userName,
+    userRole: log.userRole,
+    action: log.action,
+    affectedRecord: log.affectedRecord,
+    previousValue: log.previousValue,
+    newValue: log.newValue,
+    ipAddress: log.ipAddress,
+    userAgent: log.userAgent,
+  };
+
+  db.auditLogs.unshift(newEntry);
+  if (db.auditLogs.length > 1000) {
+    db.auditLogs = db.auditLogs.slice(0, 1000);
+  }
+  saveDatabase();
+  return newEntry;
+}
+
+export function getAuditLogs(limit = 100, filterAction?: string): AuditLogEntry[] {
+  let logs = db.auditLogs;
+  if (filterAction && filterAction !== 'all') {
+    logs = logs.filter((l) => l.action.toLowerCase().includes(filterAction.toLowerCase()));
+  }
+  return logs.slice(0, limit);
+}
+
+// ==========================================
+// CLINICAL SERVICES MANAGEMENT
+// ==========================================
+
+export function getHospitalServices(): HospitalClinicalService[] {
+  return db.services || INITIAL_SERVICES;
+}
+
+export function createHospitalService(
+  service: Omit<HospitalClinicalService, 'id'>,
+  actor: { id: string; name: string; role: string }
+): HospitalClinicalService {
+  const newService: HospitalClinicalService = {
+    ...service,
+    id: `srv-${Date.now().toString(36)}`,
+  };
+  db.services.unshift(newService);
+  saveDatabase();
+
+  recordAuditLog({
+    userId: actor.id,
+    userName: actor.name,
+    userRole: actor.role as any,
+    action: `Added Hospital Clinical Service: ${newService.nameEn}`,
+    affectedRecord: newService.id,
+    newValue: JSON.stringify(newService),
+  });
+
+  return newService;
+}
+
+export function updateHospitalService(
+  id: string,
+  updates: Partial<HospitalClinicalService>,
+  actor: { id: string; name: string; role: string }
+): HospitalClinicalService | null {
+  const idx = db.services.findIndex((s) => s.id === id);
+  if (idx === -1) return null;
+
+  const current = db.services[idx];
+  db.services[idx] = { ...current, ...updates };
+  saveDatabase();
+
+  recordAuditLog({
+    userId: actor.id,
+    userName: actor.name,
+    userRole: actor.role as any,
+    action: `Updated Hospital Clinical Service: ${db.services[idx].nameEn}`,
+    affectedRecord: id,
+    newValue: JSON.stringify(updates),
+  });
+
+  return db.services[idx];
+}
+
+export function deleteHospitalService(
+  id: string,
+  actor: { id: string; name: string; role: string }
+): boolean {
+  const idx = db.services.findIndex((s) => s.id === id);
+  if (idx === -1) return false;
+
+  const target = db.services[idx];
+  db.services.splice(idx, 1);
+  saveDatabase();
+
+  recordAuditLog({
+    userId: actor.id,
+    userName: actor.name,
+    userRole: actor.role as any,
+    action: `Removed Hospital Clinical Service: ${target.nameEn}`,
+    affectedRecord: id,
+    previousValue: target.nameEn,
+  });
+
+  return true;
+}
+
+// ==========================================
+// SYSTEM SETTINGS
+// ==========================================
+
+export function getSystemSettings() {
+  return db.systemSettings;
+}
+
+export function updateSystemSettings(
+  updates: Partial<HospitalDatabaseSchema['systemSettings']>,
+  actor: { id: string; name: string; role: string }
+) {
+  const prev = JSON.stringify(db.systemSettings);
+  db.systemSettings = {
+    ...db.systemSettings,
+    ...updates,
+    lastSecurityAuditDate: new Date().toISOString(),
+  };
+  saveDatabase();
+
+  recordAuditLog({
+    userId: actor.id,
+    userName: actor.name,
+    userRole: actor.role as any,
+    action: 'Updated Hospital Administrative & Security System Settings',
+    affectedRecord: 'SYSTEM_SETTINGS',
+    previousValue: prev,
+    newValue: JSON.stringify(updates),
+  });
+
+  return db.systemSettings;
+}
+

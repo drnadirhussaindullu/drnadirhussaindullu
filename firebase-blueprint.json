@@ -1,0 +1,72 @@
+{
+  "entities": {
+    "Admin": {
+      "title": "Admin",
+      "description": "Hospital administrator user record with role and granular permissions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 120 },
+        "email": { "type": "string", "maxLength": 150 },
+        "mobile": { "type": "string", "maxLength": 30 },
+        "role": { "type": "string", "enum": ["super_admin", "admin"] },
+        "status": { "type": "string", "enum": ["active", "disabled"] },
+        "permissions": { "type": "array" },
+        "createdAt": { "type": "string" },
+        "lastLogin": { "type": "string" }
+      },
+      "required": ["id", "name", "email", "role", "status", "permissions"]
+    },
+    "Appointment": {
+      "title": "Appointment",
+      "description": "Patient appointment booking record at Gulzar Family Hospital",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64 },
+        "doctorId": { "type": "string", "maxLength": 64 },
+        "doctorName": { "type": "string", "maxLength": 120 },
+        "patientName": { "type": "string", "maxLength": 120 },
+        "patientPhone": { "type": "string", "maxLength": 30 },
+        "patientAge": { "type": "number" },
+        "gender": { "type": "string", "enum": ["male", "female", "other"] },
+        "date": { "type": "string", "maxLength": 20 },
+        "time": { "type": "string", "maxLength": 20 },
+        "status": { "type": "string", "enum": ["pending", "confirmed", "completed", "cancelled"] },
+        "feePKR": { "type": "number" },
+        "paymentMethod": { "type": "string" },
+        "paymentStatus": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "doctorId", "patientName", "patientPhone", "date", "time", "status"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Immutable administrative activity log entry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64 },
+        "userId": { "type": "string", "maxLength": 64 },
+        "userName": { "type": "string", "maxLength": 120 },
+        "userRole": { "type": "string", "enum": ["super_admin", "admin"] },
+        "action": { "type": "string", "maxLength": 255 },
+        "timestamp": { "type": "string" },
+        "affectedRecord": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["id", "userId", "userRole", "action", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/admins/{adminId}": {
+      "schema": "Admin",
+      "description": "Administrator profiles accessible by authorized administrative staff only"
+    },
+    "/appointments/{appointmentId}": {
+      "schema": "Appointment",
+      "description": "Hospital appointment bookings managed by staff and accessible to respective patient"
+    },
+    "/audit_logs/{logId}": {
+      "schema": "AuditLog",
+      "description": "Immutable activity logs accessible exclusively by Super Admin"
+    }
+  }
+}

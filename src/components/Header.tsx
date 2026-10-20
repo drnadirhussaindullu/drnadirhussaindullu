@@ -1,5 +1,5 @@
 import React from 'react';
-import { Phone, MapPin, Clock, Calendar, MessageSquare, CreditCard, Shield, User, ChevronRight, Sparkles } from 'lucide-react';
+import { Phone, MapPin, Clock, Calendar, MessageSquare, CreditCard, Shield, User, ChevronRight, Sparkles, Info } from 'lucide-react';
 import { Language, HospitalInfoData, AdminUser } from '../types';
 
 interface HeaderProps {
@@ -175,6 +175,18 @@ export const Header: React.FC<HeaderProps> = ({
               }`}
             >
               {isUr ? 'صفحہ اول' : 'Home'}
+            </button>
+
+            <button
+              onClick={() => setActiveTab('about')}
+              className={`px-3.5 py-2 rounded-lg whitespace-nowrap transition flex items-center gap-1.5 ${
+                activeTab === 'about'
+                  ? 'bg-slate-900 text-teal-300 font-extrabold shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+              }`}
+            >
+              <Info className="w-3.5 h-3.5 text-teal-600" />
+              <span>{isUr ? 'ہمارے بارے میں' : 'About Us'}</span>
             </button>
 
             <button
